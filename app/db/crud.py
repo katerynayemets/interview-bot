@@ -54,6 +54,31 @@ async def get_session(db: AsyncSession, session_id: int) -> Session | None:
     res = await db.execute(select(Session).where(Session.id == session_id))
     return res.scalar_one_or_none()
 
+async def get_latest_session(db: AsyncSession, chat_id: int) -> Session | None:
+    res = await db.execute(
+        select(Session)
+        .where(Session.chat_id == chat_id)
+        .order_by(Session.id.desc())
+        .limit(1)
+    )
+    return res.scalar_one_or_none()
+
+
+async def update_session_language(db: AsyncSession, session_id: int, language: str) -> None:
+    s = await get_session(db, session_id)
+    if not s:
+        return
+    s.language = language
+    s.updated_at = dt.datetime.utcnow()
+
+
+async def update_session_mode(db: AsyncSession, session_id: int, mode: str) -> None:
+    s = await get_session(db, session_id)
+    if not s:
+        return
+    s.mode = mode
+    s.updated_at = dt.datetime.utcnow()
+
 
 async def set_vacancy_pending(db: AsyncSession, session_id: int, vacancy_url: str) -> None:
     s = await get_session(db, session_id)

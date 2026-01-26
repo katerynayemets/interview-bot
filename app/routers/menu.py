@@ -16,7 +16,7 @@ async def resolve_lang(state: FSMContext, chat_id: int) -> str:
         return data["lang"]
 
     async with SessionLocal() as db:
-        us = await crud.get_or_create_user_settings(db, chat_id)
+        us = await crud.ensure_user_settings(db, chat_id)
         lang = us.language or DEFAULT_LANG
 
     await state.update_data(lang=lang)
@@ -93,11 +93,11 @@ async def set_lang(cb: CallbackQuery, state: FSMContext):
     await state.update_data(lang=lang)
 
     async with SessionLocal() as db:
-        await crud.set_user_language(db, cb.message.chat.id, lang)
-
+        await crud.update_user_language(db, cb.message.chat.id, lang)
         s = await crud.get_latest_session(db, cb.message.chat.id)
         if s:
-            await crud.set_language(db, s.id, lang)
+            await crud.update_session_language(db, s.id, lang)
+        await db.commit()
 
     await cb.message.answer(tr(lang, "language_updated"))
     await cb.answer()
@@ -111,11 +111,11 @@ async def set_mode(cb: CallbackQuery, state: FSMContext):
     lang = await resolve_lang(state, cb.message.chat.id)
 
     async with SessionLocal() as db:
-        await crud.set_user_mode(db, cb.message.chat.id, mode)
-
+        await crud.update_user_mode(db, cb.message.chat.id, mode)
         s = await crud.get_latest_session(db, cb.message.chat.id)
         if s:
-            await crud.set_mode(db, s.id, mode)
+            await crud.update_session_mode(db, s.id, mode)
+        await db.commit()
 
     await cb.message.answer(tr(lang, "mode_updated"))
     await cb.answer()

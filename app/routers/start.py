@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message, CallbackQuery,
-    ReplyKeyboardMarkup, KeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -16,6 +16,7 @@ from app.db import crud
 from app.i18n import tr
 from app.states import InterviewFSM
 from app.worker.pdf_reader import read_pdf_text
+from app.worker.docx_reader import read_docx_text
 from app.worker.tasks import fetch_vacancy
 
 router = Router()
@@ -70,24 +71,20 @@ async def _start_interview(msg: Message, state: FSMContext, session_id: int, lan
             await msg.answer(tr(lang, "session_not_found"))
             return
         s.stage = "interview"
-        await crud.add_message(db, session_id, "assistant", "event", tr(lang, "trial_intro"))
+
+        q1 = tr(lang, "q1")
+        await crud.add_message(db, session_id, "assistant", "question", q1)
         await db.commit()
 
-    await msg.answer(tr(lang, "trial_intro"))
-    await msg.answer(tr(lang, "q1"))
-    async with SessionLocal() as db:
-        await crud.add_message(db, session_id, "assistant", "question", tr(lang, "q1"))
-        await db.commit()
-
+    # убираем нижнюю клавиатуру (если была) и задаём 1-й вопрос
+    await msg.answer(tr(lang, "q1"), reply_markup=ReplyKeyboardRemove())
     await state.set_state(InterviewFSM.q1)
 
 
 async def _wait_vacancy_then_start(msg: Message, state: FSMContext, session_id: int, lang: str):
-    # мягкий poll: 20-25 сек хватает, чтобы Celery успел
     for _ in range(15):
         await asyncio.sleep(1.5)
 
-        # если пользователь уже начал новую сессию — прекращаем
         data = await state.get_data()
         if data.get("session_id") != session_id:
             return
@@ -98,7 +95,6 @@ async def _wait_vacancy_then_start(msg: Message, state: FSMContext, session_id: 
                 return
 
             if s.vacancy_status == "ok":
-                # стартуем интервью
                 await _start_interview(msg, state, session_id, lang)
                 return
 
@@ -117,7 +113,6 @@ async def cmd_start(msg: Message, state: FSMContext):
         us = await crud.ensure_user_settings(db, msg.chat.id)
         await db.commit()
 
-    # мастер: track -> lang -> mode
     await state.update_data(lang=us.language, track=us.track, mode=us.mode)
     await msg.answer(tr(us.language, "choose_track"), reply_markup=track_kb(us.language))
     await state.set_state(InterviewFSM.choose_track)
@@ -130,7 +125,7 @@ async def choose_track(cb: CallbackQuery, state: FSMContext):
         await crud.update_user_track(db, cb.message.chat.id, track)
         await db.commit()
 
-    lang, _, mode = await _get_wizard_data(cb.message.chat.id, state)
+    lang, _, _ = await _get_wizard_data(cb.message.chat.id, state)
     await state.update_data(track=track)
     await cb.answer()
     await cb.message.answer(tr(lang, "choose_lang"), reply_markup=lang_kb(lang))
@@ -144,7 +139,7 @@ async def choose_lang(cb: CallbackQuery, state: FSMContext):
         await crud.update_user_language(db, cb.message.chat.id, lang)
         await db.commit()
 
-    _, track, mode = await _get_wizard_data(cb.message.chat.id, state)
+    _, track, _ = await _get_wizard_data(cb.message.chat.id, state)
     await state.update_data(lang=lang)
     await cb.answer()
     await cb.message.answer(tr(lang, "choose_mode"), reply_markup=mode_kb(lang))
@@ -162,7 +157,6 @@ async def choose_mode(cb: CallbackQuery, state: FSMContext):
     await state.update_data(mode=mode)
     await cb.answer()
 
-    # создаём session (снапшот настроек)
     async with SessionLocal() as db:
         s = await crud.create_session(db, cb.message.chat.id, language=lang, track=track, mode=mode)
         await db.commit()
@@ -174,7 +168,7 @@ async def choose_mode(cb: CallbackQuery, state: FSMContext):
 
 @router.message(InterviewFSM.waiting_vacancy, F.text & ~F.text.startswith("/"))
 async def intake_vacancy(msg: Message, state: FSMContext):
-    lang, track, mode = await _get_wizard_data(msg.chat.id, state)
+    lang, _, _ = await _get_wizard_data(msg.chat.id, state)
     data = await state.get_data()
     session_id = data.get("session_id")
     if not session_id:
@@ -191,14 +185,26 @@ async def intake_vacancy(msg: Message, state: FSMContext):
         is_url = False
 
     async with SessionLocal() as db:
+        s0 = await crud.get_session(db, session_id)
+        cv_already_ok = bool(s0 and s0.cv_status == "ok")
+
         if is_url:
             await crud.set_vacancy_pending(db, session_id, vacancy_url=text)
             await db.commit()
             fetch_vacancy.delay(session_id, text)
             await msg.answer(tr(lang, "vacancy_fetching"))
+
+            if cv_already_ok:
+                asyncio.create_task(_wait_vacancy_then_start(msg, state, session_id, lang))
+                return
         else:
             await crud.set_vacancy_ok(db, session_id, vacancy_text=text)
             await db.commit()
+
+            s = await crud.get_session(db, session_id)
+            if s and s.cv_status == "ok":
+                await _start_interview(msg, state, session_id, lang)
+                return
 
     await msg.answer(tr(lang, "ask_cv"), reply_markup=cancel_kb(lang))
     await state.set_state(InterviewFSM.waiting_cv)
@@ -216,16 +222,34 @@ async def intake_cv(msg: Message, state: FSMContext):
 
     cv_text = None
     if msg.document:
-        if msg.document.mime_type != "application/pdf":
+        filename = (msg.document.file_name or "").lower()
+        mime = (msg.document.mime_type or "").lower()
+
+        is_pdf = mime == "application/pdf" or filename.endswith(".pdf")
+        is_docx = (
+            mime in {
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/msword",
+            }
+            or filename.endswith(".docx")
+        )
+
+        if not (is_pdf or is_docx):
             await msg.answer(tr(lang, "cv_pdf_only"))
             return
+
         file = await msg.bot.get_file(msg.document.file_id)
         file_bytes = await msg.bot.download_file(file.file_path)
         raw = file_bytes.read()
-        cv_text = read_pdf_text(raw)
+
+        if is_pdf:
+            cv_text = read_pdf_text(raw)
+        else:
+            cv_text = read_docx_text(raw)
+
         if not cv_text:
             async with SessionLocal() as db:
-                await crud.set_cv_failed(db, session_id, "pdf_no_text")
+                await crud.set_cv_failed(db, session_id, "no_text")
                 await db.commit()
             await msg.answer(tr(lang, "cv_pdf_no_text"))
             return
@@ -239,20 +263,18 @@ async def intake_cv(msg: Message, state: FSMContext):
     async with SessionLocal() as db:
         await crud.set_cv_ok(db, session_id, cv_text=cv_text)
         await db.commit()
-
         s = await crud.get_session(db, session_id)
 
-    # решаем что дальше по статусу вакансии
     if s and s.vacancy_status == "ok":
         await _start_interview(msg, state, session_id, lang)
         return
 
     if s and s.vacancy_status == "pending":
         await msg.answer(tr(lang, "cv_received_wait_vacancy"))
+        await state.set_state(InterviewFSM.waiting_vacancy)
         asyncio.create_task(_wait_vacancy_then_start(msg, state, session_id, lang))
         return
 
-    # failed/empty -> просим вакансию текстом
     await msg.answer(tr(lang, "vacancy_need_text"))
     await state.set_state(InterviewFSM.waiting_vacancy)
 

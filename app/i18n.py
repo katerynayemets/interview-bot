@@ -1,16 +1,63 @@
 # app/i18n.py
 
+DEFAULT_LANG = "uk"  # за замовчуванням українська
+
+# Нотація:
+# - lang_*/mode_*/track_* — legacy-ключі
+# - btn_lang_*/btn_mode_*/btn_track_* — ключі для inline-кнопок у wizard (routers/start.py)
+
 T = {
     "ru": {
-        "choose_lang": "Выбери язык общения:",
+        # --- wizard ---
         "choose_track": "Выбери направление:",
+        "choose_lang": "Выбери язык общения:",
         "choose_mode": "Выбери режим:",
 
         "track_data": "📊 Data Analytics",
+        "btn_track_data": "📊 Data Analytics",
 
         "mode_training": "🧪 Тренировка",
         "mode_real": "⏱ Как на реальном",
+        "btn_mode_training": "🧪 Тренировка",
+        "btn_mode_real": "⏱ Как на реальном",
 
+        "lang_uk": "🇺🇦 Українська",
+        "lang_ru": "🇷🇺 Русский",
+        "lang_en": "🇬🇧 English",
+        "btn_lang_uk": "🇺🇦 Українська",
+        "btn_lang_ru": "🇷🇺 Русский",
+        "btn_lang_en": "🇬🇧 English",
+
+        "btn_cancel": "✖ Отмена",
+        "cancel_ok": "Отменено ✅ /start чтобы начать заново",
+        "cancelled": "Отменено ✅ /start чтобы начать заново",
+        "session_not_found": "Сессия не найдена. Нажми /start чтобы начать заново.",
+
+        "ask_vacancy": "Пришли текст вакансии одним сообщением ИЛИ ссылку на вакансию.",
+        "vacancy_fetching": "Ок, пробую прочитать вакансию по ссылке (это может занять 5–15 сек)...",
+        "vacancy_fetch_failed": "Не смогла вытащить текст по ссылке 😕\nПожалуйста, вставь текст вакансии одним сообщением.",
+        "vacancy_still_pending": "Я всё ещё читаю вакансию… Если долго — просто вставь текст вакансии одним сообщением.",
+        "vacancy_need_text": "Я не смогла прочитать вакансию по ссылке 😕\nПожалуйста, вставь текст вакансии одним сообщением.",
+
+        "ask_cv": "Теперь пришли резюме: текстом или файлом (PDF/DOCX).",
+        "cv_received_wait_vacancy": "Резюме сохранено ✅ Я ещё читаю вакансию по ссылке. Начну интервью автоматически.",
+        "cv_pdf_only": "Пока поддерживаю только PDF/DOCX. Либо пришли резюме текстом.",
+        "cv_pdf_no_text": "В файле не нашла текст (возможно, это скан). Пришли резюме текстом, пожалуйста.",
+        # legacy alias
+        "cv_pdf_empty": "В файле не нашла текст (возможно, это скан). Пришли резюме текстом или .docx, пожалуйста.",
+        "cv_too_short": "Резюме слишком короткое. Пришли полный текст или файл.",
+
+        # --- trial questions ---
+        "q1": "Вопрос 1/3:\nКак бы ты посчитала retention D7? Какие данные нужны?",
+        # legacy alias
+        "trial_intro": "Вопрос 1/3:\nКак бы ты посчитала retention D7? Какие данные нужны?",
+        "q2": "Вопрос 2/3:\nНапиши SQL: топ-3 продукта по выручке за последние 30 дней (orders: user_id, product_id, price, created_at).",
+        "q3": "Вопрос 3/3:\nКонверсия упала на 10%. Какие 5 причин/проверок ты сделаешь в первую очередь?",
+
+        "generating": "Принято ✅ Генерирую snapshot-отчёт (в фоне, через очередь)...",
+        "snapshot_ready": "🧾 Snapshot готов:",
+
+        # --- menu / settings ---
         "menu": "Меню:",
         "btn_trial": "🧪 Trial (бесплатно)",
         "btn_settings": "⚙️ Настройки",
@@ -22,39 +69,60 @@ T = {
 
         "language_updated": "✅ Язык изменён",
         "mode_updated": "✅ Режим изменён",
-        "cancelled": "Отменено ✅ /start чтобы начать заново",
+
+        "help": "Это тренажёр интервью под вакансию.\nTrial: 3 вопроса + snapshot.\nДальше подключим LLM и полноценный прогон.",
+    },
+
+    "uk": {
+        # --- wizard ---
+        "choose_track": "Оберіть напрям:",
+        "choose_lang": "Оберіть мову спілкування:",
+        "choose_mode": "Оберіть режим:",
+
+        "track_data": "📊 Data Analytics",
+        "btn_track_data": "📊 Data Analytics",
+
+        "mode_training": "🧪 Тренування",
+        "mode_real": "⏱ Як на реальному",
+        "btn_mode_training": "🧪 Тренування",
+        "btn_mode_real": "⏱ Як на реальному",
 
         "lang_uk": "🇺🇦 Українська",
         "lang_ru": "🇷🇺 Русский",
         "lang_en": "🇬🇧 English",
+        "btn_lang_uk": "🇺🇦 Українська",
+        "btn_lang_ru": "🇷🇺 Русский",
+        "btn_lang_en": "🇬🇧 English",
 
-        "ask_vacancy": "Пришли текст вакансии одним сообщением ИЛИ ссылку на вакансию.",
-        "ask_cv": "Теперь пришли резюме: текстом или PDF-файлом.",
+        "btn_cancel": "✖ Скасувати",
+        "cancel_ok": "Скасовано ✅ /start щоб почати заново",
+        "cancelled": "Скасовано ✅ /start щоб почати заново",
+        "session_not_found": "Сесію не знайдено. Натисніть /start щоб почати заново.",
 
-        "vacancy_fetching": "Ок, пробую прочитать вакансию по ссылке (это может занять 5–15 сек)...",
-        "vacancy_fetch_failed": "Не смогла вытащить текст по ссылке 😕\nПожалуйста, вставь текст вакансии одним сообщением.",
+        "ask_vacancy": "Надішли текст вакансії одним повідомленням АБО посилання на вакансію.",
+        "vacancy_fetching": "Ок, читаю вакансію за посиланням (5–15 сек)...",
+        "vacancy_fetch_failed": "Не вдалося прочитати вакансію за посиланням 😕\nБудь ласка, надішли текст вакансії одним повідомленням.",
+        "vacancy_still_pending": "Я все ще читаю вакансію… Якщо довго — просто надішли текст вакансії одним повідомленням.",
+        "vacancy_need_text": "Я не зміг прочитати вакансію за посиланням 😕\nБудь ласка, надішли текст вакансії одним повідомленням.",
 
-        "cv_pdf_empty": "Я не смогла извлечь текст из PDF (возможно, это скан).\nПожалуйста, пришли резюме текстом или в формате .docx.",
+        "ask_cv": "Тепер надішли резюме: текстом або файлом (PDF/DOCX).",
+        "cv_received_wait_vacancy": "Резюме збережено ✅ Я ще читаю вакансію за посиланням. Почну інтерв’ю автоматично.",
+        "cv_pdf_only": "Поки підтримую тільки PDF/DOCX. Або надішли резюме текстом.",
+        "cv_pdf_no_text": "У файлі не знайшов текст (можливо, скан). Надішли резюме текстом, будь ласка.",
+        # legacy alias
+        "cv_pdf_empty": "Не вдалося витягти текст із PDF (можливо, це скан).\nНадішли резюме текстом або .docx.",
+        "cv_too_short": "Резюме занадто коротке. Надішли повний текст або файл.",
 
-        "trial_intro": "Поехали. Вопрос 1/3:\nКак бы ты посчитала retention D7? Какие данные нужны?",
-        "q2": "Вопрос 2/3:\nНапиши SQL: топ-3 продукта по выручке за последние 30 дней (orders: user_id, product_id, price, created_at).",
-        "q3": "Вопрос 3/3:\nКонверсия упала на 10%. Какие 5 причин/проверок ты сделаешь в первую очередь?",
+        # --- trial questions ---
+        "q1": "Питання 1/3:\nЯк би ти порахувала retention D7? Які дані потрібні?",
+        "trial_intro": "Питання 1/3:\nЯк би ти порахувала retention D7? Які дані потрібні?",
+        "q2": "Питання 2/3:\nНапиши SQL: топ-3 продукти за виручкою за останні 30 днів (orders: user_id, product_id, price, created_at).",
+        "q3": "Питання 3/3:\nКонверсія впала на 10%. Які 5 причин/перевірок зробиш першими?",
 
-        "generating": "Принято ✅ Генерирую snapshot-отчёт (фон, через очередь)...",
+        "generating": "Прийнято ✅ Генерую snapshot-звіт (у фоні, через чергу)...",
+        "snapshot_ready": "🧾 Snapshot готовий:",
 
-        "help": "Это тренажёр интервью под вакансию.\nTrial: 3 вопроса + snapshot.\nСкоро добавим full sprint и оплату.",
-    },
-
-    "uk": {
-        "choose_lang": "беріть мову:",
-        "choose_track": "Оберіть напрям:",
-        "choose_mode": "Оберіть режим:",
-
-        "track_data": "📊 Data Analytics",
-
-        "mode_training": "🧪 Тренування",
-        "mode_real": "⏱ Як на реальному",
-
+        # --- menu / settings ---
         "menu": "Меню:",
         "btn_trial": "🧪 Trial (безкоштовно)",
         "btn_settings": "⚙️ Налаштування",
@@ -66,44 +134,60 @@ T = {
 
         "language_updated": "✅ Мову змінено",
         "mode_updated": "✅ Режим змінено",
-        "cancelled": "Скасовано ✅ /start щоб почати заново",
+
+        "help": "Це тренажер інтерв'ю під вакансію.\nTrial: 3 питання + snapshot.\nДалі підключимо LLM і повноцінний прогін.",
+    },
+
+    "en": {
+        # --- wizard ---
+        "choose_track": "Choose a track:",
+        "choose_lang": "Choose language:",
+        "choose_mode": "Choose mode:",
+
+        "track_data": "📊 Data Analytics",
+        "btn_track_data": "📊 Data Analytics",
+
+        "mode_training": "🧪 Training",
+        "mode_real": "⏱ Real mode",
+        "btn_mode_training": "🧪 Training",
+        "btn_mode_real": "⏱ Real mode",
 
         "lang_uk": "🇺🇦 Українська",
         "lang_ru": "🇷🇺 Русский",
         "lang_en": "🇬🇧 English",
+        "btn_lang_uk": "🇺🇦 Українська",
+        "btn_lang_ru": "🇷🇺 Русский",
+        "btn_lang_en": "🇬🇧 English",
 
-        "ask_vacancy": "Надішли текст вакансії одним повідомленням АБО посилання на вакансію.",
-        "ask_cv": "Тепер надішли резюме: текстом або PDF-файлом.",
+        "btn_cancel": "✖ Cancel",
+        "cancel_ok": "Cancelled ✅ /start to begin again",
+        "cancelled": "Cancelled ✅ /start to begin again",
+        "session_not_found": "Session not found. Use /start to begin again.",
 
-        
-        "cv_received_wait_vacancy": "Резюме збережено ✅ Я ще читаю вакансію за посиланням. Почну інтерв’ю автоматично.",
-        "vacancy_need_text": "Я не зміг прочитати вакансію за посиланням. Будь ласка, надішли текст вакансії одним повідомленням.",
-        "vacancy_fetch_failed": "Не вдалося прочитати вакансію за посиланням. Надішли, будь ласка, текст вакансії.",
-        "vacancy_still_pending": "Я все ще читаю вакансію… Якщо довго — просто надішли текст вакансії.",
-        "cv_pdf_empty": "Не вдалося витягти текст із PDF (можливо, це скан).\nНадішли резюме текстом або .docx.",
-        "cv_pdf_only": "Поки що підтримую тільки PDF. Або надішли резюме текстом.",
-        "cv_pdf_no_text": "У PDF не знайшов текст (можливо, скан). Надішли резюме текстом, будь ласка.",
-        "cv_too_short": "Резюме занадто коротке. Надішли повний текст або PDF.",
+        "ask_vacancy": "Send the vacancy text in one message OR a vacancy link.",
+        "vacancy_fetching": "Ok, fetching vacancy from the link (5–15 sec)...",
+        "vacancy_fetch_failed": "Couldn't extract the vacancy text from that link 😕\nPlease paste the vacancy text in one message.",
+        "vacancy_still_pending": "Still fetching the vacancy… If it takes too long, just paste the vacancy text in one message.",
+        "vacancy_need_text": "I couldn't read the vacancy from that link 😕\nPlease paste the vacancy text in one message.",
 
-        "trial_intro": "Поїхали. Питання 1/3:\nЯк би ти порахувала retention D7? Які дані потрібні?",
-        "q2": "Питання 2/3:\nНапиши SQL: топ-3 продукти за виручкою за останні 30 днів (orders: user_id, product_id, price, created_at).",
-        "q3": "Питання 3/3:\nКонверсія впала на 10%. Які 5 причин/перевірок зробиш першими?",
+        "ask_cv": "Now send your resume: as text or a file (PDF/DOCX).",
+        "cv_received_wait_vacancy": "Resume saved ✅ I'm still fetching the vacancy from the link. I'll start the interview automatically.",
+        "cv_pdf_only": "Currently supported formats: PDF/DOCX. Or send resume as text.",
+        "cv_pdf_no_text": "Couldn't find text in the file (might be a scanned image). Please send resume as text.",
+        # legacy alias
+        "cv_pdf_empty": "Couldn't extract text from the PDF (might be a scanned image).\nPlease send the resume as text or .docx.",
+        "cv_too_short": "Resume is too short. Please send the full text or a file.",
 
-        "generating": "Прийнято ✅ Генерую snapshot-звіт (у фоні, через чергу)...",
+        # --- trial questions ---
+        "q1": "Q1/3:\nHow would you compute D7 retention? What data do you need?",
+        "trial_intro": "Q1/3:\nHow would you compute D7 retention? What data do you need?",
+        "q2": "Q2/3:\nWrite SQL: top-3 products by revenue in the last 30 days (orders: user_id, product_id, price, created_at).",
+        "q3": "Q3/3:\nConversion dropped by 10%. What 5 checks would you do first?",
 
-        "help": "Це тренажер інтерв'ю під вакансію.\nTrial: 3 питання + snapshot.\nДалі додамо full sprint та оплату.",
-    },
+        "generating": "Got it ✅ Generating snapshot report (in background)...",
+        "snapshot_ready": "🧾 Snapshot ready:",
 
-    "en": {
-        "choose_lang": "Choose language:",
-        "choose_track": "Choose a track:",
-        "choose_mode": "Choose mode:",
-
-        "track_data": "📊 Data Analytics",
-
-        "mode_training": "🧪 Training",
-        "mode_real": "⏱ Real mode",
-
+        # --- menu / settings ---
         "menu": "Menu:",
         "btn_trial": "🧪 Trial (free)",
         "btn_settings": "⚙️ Settings",
@@ -115,31 +199,11 @@ T = {
 
         "language_updated": "✅ Language updated",
         "mode_updated": "✅ Mode updated",
-        "cancelled": "Cancelled ✅ /start to begin again",
 
-        "lang_uk": "🇺🇦 Українська",
-        "lang_ru": "🇷🇺 Русский",
-        "lang_en": "🇬🇧 English",
-
-        "ask_vacancy": "Send the vacancy text in one message OR a vacancy link.",
-        "ask_cv": "Now send your resume: as text or a PDF file.",
-
-        "vacancy_fetching": "Ok, fetching vacancy from the link (5–15 sec)...",
-        "vacancy_fetch_failed": "Couldn't extract the vacancy text from that link 😕\nPlease paste the vacancy text in one message.",
-
-        "cv_pdf_empty": "Couldn't extract text from the PDF (might be a scanned image).\nPlease send the resume as text or .docx.",
-
-        "trial_intro": "Let's go. Q1/3:\nHow would you compute D7 retention? What data do you need?",
-        "q2": "Q2/3:\nWrite SQL: top-3 products by revenue in the last 30 days (orders: user_id, product_id, price, created_at).",
-        "q3": "Q3/3:\nConversion dropped by 10%. What 5 checks would you do first?",
-
-        "generating": "Got it ✅ Generating snapshot report (in background)...",
-
-        "help": "This is a vacancy-specific interview trainer.\nTrial: 3 questions + snapshot.\nFull sprint & payments next.",
+        "help": "This is a vacancy-specific interview trainer.\nTrial: 3 questions + snapshot.\nNext: LLM-based full run.",
     },
 }
 
-DEFAULT_LANG = "uk"
 
 def tr(lang: str, key: str) -> str:
     lang = (lang or DEFAULT_LANG).lower()
