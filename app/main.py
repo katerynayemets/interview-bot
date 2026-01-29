@@ -8,8 +8,19 @@ from app.config import settings
 from app.bot import create_bot, create_dispatcher
 from app.db.base import Base
 from app.db.session import engine
+from app.logging_config import setup_logging, get_logger
+from app.middleware import setup_middlewares
 
-app = FastAPI()
+# Настраиваем логирование при импорте модуля
+setup_logging(
+    log_level=settings.LOG_LEVEL if hasattr(settings, "LOG_LEVEL") else "INFO",
+    log_to_file=True,
+    log_to_console=True,
+)
+
+logger = get_logger(__name__)
+
+app = FastAPI(title="Interview Bot API", version="1.0.0")
 bot = create_bot()
 dp = None
 polling_task: asyncio.Task | None = None
@@ -17,7 +28,9 @@ polling_task: asyncio.Task | None = None
 from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, MenuButtonCommands
 from aiogram.methods import SetChatMenuButton
 
+
 async def setup_commands(bot):
+    """Настройка команд бота для меню"""
     # RU
     await bot.set_my_commands(
         commands=[
@@ -67,11 +80,26 @@ async def setup_commands(bot):
 @app.on_event("startup")
 async def on_startup():
     global dp, polling_task
+
+    logger.info("Starting Interview Bot...")
+
     dp = await create_dispatcher()
 
-    # create tables (MVP). Дальше сделаем Alembic.
+    # Регистрируем middleware
+    setup_middlewares(dp)
+    logger.info("Middlewares registered")
+
+    # Create tables (fallback, основное через Alembic)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database tables verified")
+
+    # Настраиваем команды бота
+    try:
+        await setup_commands(bot)
+        logger.info("Bot commands configured")
+    except Exception as e:
+        logger.warning(f"Failed to setup bot commands: {e}")
 
     if settings.BOT_MODE == "webhook":
         if not settings.PUBLIC_URL:
@@ -83,36 +111,97 @@ async def on_startup():
             secret_token=settings.WEBHOOK_SECRET,
             drop_pending_updates=True,
         ))
+        logger.info(f"Webhook mode: {settings.PUBLIC_URL}{settings.WEBHOOK_PATH}")
     else:
         # polling mode for local quick check
         polling_task = asyncio.create_task(dp.start_polling(bot))
+        logger.info("Polling mode started")
+
+    logger.info("Interview Bot started successfully!")
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    logger.info("Shutting down Interview Bot...")
+
     if settings.BOT_MODE == "webhook":
         await bot(DeleteWebhook(drop_pending_updates=True))
+
     if polling_task:
         polling_task.cancel()
+        try:
+            await polling_task
+        except asyncio.CancelledError:
+            pass
+
     await bot.session.close()
+    logger.info("Interview Bot stopped")
+
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "mode": settings.BOT_MODE}
+    """Health check endpoint"""
+    return {
+        "ok": True,
+        "mode": settings.BOT_MODE,
+        "version": "1.0.0",
+    }
+
 
 @app.post("/tg/webhook")
 async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
+    """Telegram webhook endpoint"""
     if settings.BOT_MODE != "webhook":
         raise HTTPException(400, "Webhook endpoint is disabled in polling mode")
 
     if x_telegram_bot_api_secret_token != settings.WEBHOOK_SECRET:
+        logger.warning("Webhook request with invalid secret token")
         raise HTTPException(401, "Bad webhook secret")
 
     data = await request.json()
     update = Update.model_validate(data)
-    await dp.feed_update(bot, update)
+
+    try:
+        await dp.feed_update(bot, update)
+    except Exception as e:
+        logger.exception(f"Error processing update: {e}")
+        # Не возвращаем ошибку Telegram'у, иначе он будет повторять запрос
+        pass
+
     return {"ok": True}
 
 
+# ============== Admin Endpoints (для будущей админки) ==============
+
+@app.get("/api/stats")
+async def get_stats():
+    """Статистика для админки (требует авторизации в будущем)"""
+    from sqlalchemy import select, func
+    from app.db.session import SessionLocal
+    from app.db.models import UserSettings, Session, UserActivity, ErrorLog
+
+    async with SessionLocal() as db:
+        # Считаем пользователей
+        users_result = await db.execute(select(func.count(UserSettings.chat_id)))
+        total_users = users_result.scalar() or 0
+
+        # Считаем сессии
+        sessions_result = await db.execute(select(func.count(Session.id)))
+        total_sessions = sessions_result.scalar() or 0
+
+        # Считаем ошибки за последние 24 часа
+        from datetime import datetime, timedelta
+        day_ago = datetime.utcnow() - timedelta(days=1)
+        errors_result = await db.execute(
+            select(func.count(ErrorLog.id)).where(ErrorLog.created_at > day_ago)
+        )
+        errors_24h = errors_result.scalar() or 0
+
+    return {
+        "total_users": total_users,
+        "total_sessions": total_sessions,
+        "errors_24h": errors_24h,
+    }
