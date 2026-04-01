@@ -1,11 +1,3 @@
-# app/worker/llm_tasks.py
-"""
-Celery задачи для работы с LLM:
-- Генерация вопросов интервью
-- Оценка ответов
-- Генерация итогового фидбека
-"""
-
 import json
 import asyncio
 from typing import Any
@@ -22,7 +14,6 @@ from app.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-# Один event loop для всех задач в воркере
 _loop = None
 
 
@@ -35,11 +26,8 @@ def get_loop():
 
 
 def run_async(coro):
-    """Запускает корутину в event loop"""
     return get_loop().run_until_complete(coro)
 
-
-# ============== Генерация вопроса ==============
 
 @celery.task(name="generate_question", bind=True, max_retries=2)
 def generate_question(
@@ -48,22 +36,10 @@ def generate_question(
     chat_id: int,
     phase_type: str | None = None,
 ) -> dict:
-    """
-    Генерирует следующий вопрос интервью через LLM.
-
-    Args:
-        session_id: ID сессии
-        chat_id: ID чата для отправки
-        phase_type: тип фазы (если None - определяется автоматически)
-
-    Returns:
-        dict с информацией о сгенерированном вопросе
-    """
     try:
         return run_async(_generate_question_async(session_id, chat_id, phase_type))
     except Exception as e:
         logger.exception(f"Error generating question: {e}", session_id=session_id)
-        # Отправляем сообщение об ошибке
         send_message(chat_id, "Произошла ошибка. Попробуй /start заново.")
         raise self.retry(exc=e, countdown=5)
 
@@ -73,31 +49,25 @@ async def _generate_question_async(
     chat_id: int,
     phase_type: str | None,
 ) -> dict:
-    """Асинхронная генерация вопроса"""
-
     async with SessionLocal() as db:
-        # Загружаем контекст
         context = await build_interview_context(db, session_id, include_full_documents=True)
         session = await crud.get_session(db, session_id)
 
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
-        # Определяем фазу
         if not phase_type:
             current_phase = await crud.get_current_phase(db, session_id)
             if current_phase:
                 phase_type = current_phase.phase_type
             else:
-                # Стартуем первую фазу
                 next_phase = await crud.get_next_phase(db, session_id)
                 if next_phase:
                     await crud.start_phase(db, next_phase.id)
                     phase_type = next_phase.phase_type
                 else:
-                    phase_type = "technical_deep"  # fallback
+                    phase_type = "technical_deep"
 
-        # Создаём промпт менеджер
         prompt_manager = PromptManager(
             interview_type=session.interview_type,
             track=session.track,
@@ -107,17 +77,15 @@ async def _generate_question_async(
             vacancy_summary=context.vacancy_summary,
         )
 
-        # Строим промпт
         system_prompt = prompt_manager.get_system_prompt()
         question_prompt = prompt_manager.build_question_prompt(
             phase_type=phase_type,
             conversation_history=[
                 {"role": m["role"], "content": m["content"]}
-                for m in context.conversation[-10:]  # последние 10 сообщений
+                for m in context.conversation[-10:]
             ],
         )
 
-        # Выбираем модель в зависимости от режима
         if session.mode == "real":
             model = settings.LLM_MODEL_REAL
             max_tokens = settings.LLM_MAX_TOKENS_REAL
@@ -125,7 +93,6 @@ async def _generate_question_async(
             model = settings.LLM_MODEL_TRAINING
             max_tokens = settings.LLM_MAX_TOKENS_TRAINING
 
-        # Вызываем LLM
         llm = get_llm_client(
             provider=settings.LLM_PROVIDER,
             model=model,
@@ -145,7 +112,6 @@ async def _generate_question_async(
 
         question_text = response.content.strip()
 
-        # Сохраняем вопрос в БД
         current_phase = await crud.get_current_phase(db, session_id)
         phase_id = current_phase.id if current_phase else None
 
@@ -161,7 +127,6 @@ async def _generate_question_async(
             latency_ms=response.latency_ms,
         )
 
-        # Обновляем статистику
         cost = estimate_cost(
             settings.LLM_PROVIDER,
             model,
@@ -185,7 +150,6 @@ async def _generate_question_async(
             extra={"tokens": response.total_tokens, "cost": cost}
         )
 
-    # Отправляем вопрос пользователю
     send_message(chat_id, question_text)
 
     return {
@@ -197,8 +161,6 @@ async def _generate_question_async(
     }
 
 
-# ============== Оценка ответа ==============
-
 @celery.task(name="evaluate_answer", bind=True, max_retries=2)
 def evaluate_answer(
     self,
@@ -206,12 +168,6 @@ def evaluate_answer(
     answer_text: str,
     question_text: str,
 ) -> dict:
-    """
-    Оценивает ответ пользователя через LLM.
-
-    Returns:
-        dict с оценками
-    """
     try:
         return run_async(_evaluate_answer_async(session_id, answer_text, question_text))
     except Exception as e:
@@ -224,8 +180,6 @@ async def _evaluate_answer_async(
     answer_text: str,
     question_text: str,
 ) -> dict:
-    """Асинхронная оценка ответа"""
-
     async with SessionLocal() as db:
         context = await build_interview_context(db, session_id)
         session = await crud.get_session(db, session_id)
@@ -247,26 +201,20 @@ async def _evaluate_answer_async(
             answer=answer_text,
         )
 
-        # Используем более дешёвую модель для оценки
+        # Always use the cheaper model for per-answer evaluation
         llm = get_llm_client(
             provider=settings.LLM_PROVIDER,
-            model=settings.LLM_MODEL_TRAINING,  # всегда дешёвая модель
+            model=settings.LLM_MODEL_TRAINING,
             api_key=settings.OPENAI_API_KEY if settings.LLM_PROVIDER == "openai" else settings.ANTHROPIC_API_KEY,
         )
 
-        messages = [
-            ChatMessage(role="user", content=evaluation_prompt),
-        ]
-
         response = await llm.chat(
-            messages=messages,
-            temperature=0.3,  # меньше creativity для оценки
+            messages=[ChatMessage(role="user", content=evaluation_prompt)],
+            temperature=0.3,
             max_tokens=512,
         )
 
-        # Парсим JSON из ответа
         try:
-            # Ищем JSON в ответе
             content = response.content
             start = content.find("{")
             end = content.rfind("}") + 1
@@ -277,7 +225,6 @@ async def _evaluate_answer_async(
         except json.JSONDecodeError:
             evaluation = {"error": "Invalid JSON", "raw": response.content}
 
-        # Обновляем статистику
         cost = estimate_cost(
             settings.LLM_PROVIDER,
             settings.LLM_MODEL_TRAINING,
@@ -301,8 +248,6 @@ async def _evaluate_answer_async(
     return evaluation
 
 
-# ============== Финальный фидбек ==============
-
 @celery.task(name="generate_feedback", bind=True, max_retries=2)
 def generate_feedback(
     self,
@@ -310,9 +255,6 @@ def generate_feedback(
     chat_id: int,
     lang: str = "uk",
 ) -> dict:
-    """
-    Генерирует итоговый фидбек по интервью.
-    """
     try:
         return run_async(_generate_feedback_async(session_id, chat_id, lang))
     except Exception as e:
@@ -326,8 +268,6 @@ async def _generate_feedback_async(
     chat_id: int,
     lang: str,
 ) -> dict:
-    """Асинхронная генерация фидбека"""
-
     async with SessionLocal() as db:
         context = await build_interview_context(db, session_id, include_full_documents=True)
         session = await crud.get_session(db, session_id)
@@ -344,16 +284,13 @@ async def _generate_feedback_async(
             vacancy_summary=context.vacancy_summary,
         )
 
-        # Собираем все оценки (если есть)
-        # TODO: хранить оценки по каждому вопросу
-        question_scores = []
+        question_scores: list = []
 
         feedback_prompt = prompt_manager.build_feedback_prompt(
             full_conversation=context.conversation,
             question_scores=question_scores,
         )
 
-        # Используем хорошую модель для фидбека
         model = settings.LLM_MODEL_REAL if session.mode == "real" else settings.LLM_MODEL_TRAINING
 
         llm = get_llm_client(
@@ -362,17 +299,12 @@ async def _generate_feedback_async(
             api_key=settings.OPENAI_API_KEY if settings.LLM_PROVIDER == "openai" else settings.ANTHROPIC_API_KEY,
         )
 
-        messages = [
-            ChatMessage(role="user", content=feedback_prompt),
-        ]
-
         response = await llm.chat(
-            messages=messages,
+            messages=[ChatMessage(role="user", content=feedback_prompt)],
             temperature=0.5,
             max_tokens=2048,
         )
 
-        # Парсим JSON
         try:
             content = response.content
             start = content.find("{")
@@ -384,7 +316,6 @@ async def _generate_feedback_async(
         except json.JSONDecodeError:
             feedback_data = {}
 
-        # Сохраняем фидбек в БД
         await crud.create_interview_feedback(
             db, session_id,
             technical_score=feedback_data.get("technical_score"),
@@ -397,7 +328,6 @@ async def _generate_feedback_async(
             recommended_topics=feedback_data.get("recommended_topics"),
         )
 
-        # Обновляем статистику
         cost = estimate_cost(
             settings.LLM_PROVIDER, model,
             response.tokens_input, response.tokens_output
@@ -409,10 +339,8 @@ async def _generate_feedback_async(
             cost_usd=cost,
         )
 
-        # Обновляем статус сессии
         await crud.update_session_stage(db, session_id, "done")
 
-        # Обновляем статистику пользователя
         user = await crud.get_user_settings(db, session.chat_id)
         if user:
             user.total_interviews += 1
@@ -430,7 +358,6 @@ async def _generate_feedback_async(
             action="llm_feedback",
         )
 
-    # Формируем и отправляем сообщение
     feedback_text = _format_feedback_message(feedback_data, lang)
     send_message(chat_id, feedback_text)
 
@@ -438,17 +365,13 @@ async def _generate_feedback_async(
 
 
 def _format_feedback_message(feedback: dict, lang: str) -> str:
-    """Форматирует фидбек для отправки в Telegram"""
-
     if not feedback:
         return "Не удалось сгенерировать детальный отчёт."
 
     lines = []
 
-    # Заголовок
     lines.append("🎯 **Результаты интервью**\n")
 
-    # Оценки
     if feedback.get("overall_score"):
         lines.append(f"📊 Общая оценка: **{feedback['overall_score']}/10**\n")
 
@@ -463,32 +386,26 @@ def _format_feedback_message(feedback: dict, lang: str) -> str:
     if scores:
         lines.append(" | ".join(scores) + "\n")
 
-    # Сильные стороны
     if feedback.get("strengths"):
         lines.append("\n✅ **Сильные стороны:**")
         for s in feedback["strengths"][:5]:
             lines.append(f"• {s}")
 
-    # Что улучшить
     if feedback.get("improvements"):
         lines.append("\n📈 **Что улучшить:**")
         for i in feedback["improvements"][:5]:
             lines.append(f"• {i}")
 
-    # Рекомендации
     if feedback.get("recommended_topics"):
         lines.append("\n📚 **Рекомендуем изучить:**")
         for t in feedback["recommended_topics"][:5]:
             lines.append(f"• {t}")
 
-    # Детальный фидбек
     if feedback.get("detailed_feedback"):
         lines.append(f"\n💬 **Детальный разбор:**\n{feedback['detailed_feedback'][:1500]}")
 
     return "\n".join(lines)
 
-
-# ============== Простая генерация (для training) ==============
 
 @celery.task(name="generate_simple_question")
 def generate_simple_question(
@@ -496,10 +413,6 @@ def generate_simple_question(
     chat_id: int,
     question_number: int,
 ) -> dict:
-    """
-    Генерирует простой вопрос для training режима.
-    Более легковесный вариант без полного контекста.
-    """
     try:
         return run_async(_generate_simple_question_async(session_id, chat_id, question_number))
     except Exception as e:
@@ -513,17 +426,13 @@ async def _generate_simple_question_async(
     chat_id: int,
     question_number: int,
 ) -> dict:
-    """Генерация простого вопроса"""
-
     async with SessionLocal() as db:
         session = await crud.get_session(db, session_id)
         if not session:
             return {"error": "Session not found"}
 
-        # Получаем последние сообщения для контекста
         messages = await crud.get_session_messages(db, session_id, limit=6)
 
-        # Простой промпт
         history = "\n".join([
             f"{'Q' if m.role == 'assistant' else 'A'}: {m.text[:200]}"
             for m in messages[-4:]
@@ -555,7 +464,6 @@ async def _generate_simple_question_async(
 
         question = response.content.strip()
 
-        # Сохраняем
         await crud.add_message(
             db, session_id,
             role="assistant",

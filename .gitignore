@@ -1,26 +1,28 @@
-
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 
-
 .env
-
 
 .idea/
 .vscode/
 *.swp
 
-
 .DS_Store
 Thumbs.db
 
-
 docker-compose.override.yml
 
-
 *.log
-
+logs/
 
 alembic/versions/__pycache__/
+
+venv/
+.venv/
+env/
+
+*.egg-info/
+dist/
+build/

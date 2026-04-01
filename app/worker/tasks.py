@@ -1,4 +1,3 @@
-# app/worker/tasks.py
 import asyncio
 import logging
 from sqlalchemy import select
@@ -15,11 +14,12 @@ _LOOP: asyncio.AbstractEventLoop | None = None
 
 def run_coro(coro):
     """
-    ВАЖНО для Celery(prefork):
-    нельзя делать asyncio.run() на каждый таск с общим async-engine/pool,
-    иначе будут ошибки 'Future attached to a different loop' и 'another operation is in progress'.
+    Run a coroutine on a single per-worker event loop.
 
-    Держим ОДИН event loop на процесс воркера и гоняем корутины через него.
+    Celery prefork workers must not call asyncio.run() per task when sharing
+    an async engine/pool — doing so causes 'Future attached to a different loop'
+    and 'another operation is in progress' errors. We keep one loop per worker
+    process and drive all coroutines through it.
     """
     global _LOOP
     if _LOOP is None or _LOOP.is_closed():

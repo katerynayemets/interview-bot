@@ -1,4 +1,3 @@
-# app/db/crud.py
 import datetime as dt
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,8 +8,6 @@ from app.db.models import (
     SessionDocument, InterviewPhase, SessionStats, InterviewFeedback
 )
 
-
-# ============== UserSettings ==============
 
 async def ensure_user_settings(db: AsyncSession, chat_id: int) -> UserSettings:
     res = await db.execute(select(UserSettings).where(UserSettings.chat_id == chat_id))
@@ -47,20 +44,16 @@ async def update_user_mode(db: AsyncSession, chat_id: int, mode: str) -> None:
 
 
 async def update_user_interview_type(db: AsyncSession, chat_id: int, interview_type: str) -> None:
-    """Обновляет тип интервью: hr_soft | technical_hard | mixed"""
     s = await ensure_user_settings(db, chat_id)
     s.interview_type = interview_type
     s.updated_at = dt.datetime.utcnow()
 
 
 async def update_user_difficulty(db: AsyncSession, chat_id: int, difficulty: str) -> None:
-    """Обновляет уровень сложности: junior | middle | senior | lead"""
     s = await ensure_user_settings(db, chat_id)
     s.difficulty = difficulty
     s.updated_at = dt.datetime.utcnow()
 
-
-# ============== Session ==============
 
 async def create_session(
     db: AsyncSession,
@@ -71,7 +64,7 @@ async def create_session(
     interview_type: str = "mixed",
     difficulty: str = "middle",
 ) -> Session:
-    """Создает новую сессию интервью со снапшотом настроек"""
+    """Create a new interview session with a settings snapshot."""
     s = Session(
         chat_id=chat_id,
         language=language,
@@ -94,7 +87,7 @@ async def get_session(db: AsyncSession, session_id: int) -> Session | None:
 
 
 async def get_session_with_documents(db: AsyncSession, session_id: int) -> Session | None:
-    """Получает сессию с загруженными документами"""
+    """Fetch a session with its documents eagerly loaded."""
     res = await db.execute(
         select(Session)
         .where(Session.id == session_id)
@@ -153,8 +146,6 @@ async def update_session_stage(db: AsyncSession, session_id: int, stage: str) ->
     s.updated_at = dt.datetime.utcnow()
 
 
-# ============== Vacancy Status ==============
-
 async def set_vacancy_pending(db: AsyncSession, session_id: int, vacancy_url: str) -> None:
     s = await get_session(db, session_id)
     if not s:
@@ -179,7 +170,7 @@ async def set_vacancy_ok(
         return
     if vacancy_url:
         s.vacancy_url = vacancy_url
-    s.vacancy_text = vacancy_text  # legacy, для обратной совместимости
+    s.vacancy_text = vacancy_text
     s.vacancy_summary = vacancy_summary[:512] if vacancy_summary else vacancy_text[:512]
     s.vacancy_status = "ok"
     s.vacancy_error = None
@@ -198,7 +189,6 @@ async def set_vacancy_failed(db: AsyncSession, session_id: int, error: str, vaca
 
 
 async def set_vacancy_skipped(db: AsyncSession, session_id: int) -> None:
-    """Пользователь явно пропустил вакансию"""
     s = await get_session(db, session_id)
     if not s:
         return
@@ -206,8 +196,6 @@ async def set_vacancy_skipped(db: AsyncSession, session_id: int) -> None:
     s.vacancy_error = None
     s.updated_at = dt.datetime.utcnow()
 
-
-# ============== CV Status ==============
 
 async def set_cv_ok(
     db: AsyncSession,
@@ -218,7 +206,7 @@ async def set_cv_ok(
     s = await get_session(db, session_id)
     if not s:
         return
-    s.cv_text = cv_text  # legacy
+    s.cv_text = cv_text
     s.cv_summary = cv_summary[:512] if cv_summary else cv_text[:512]
     s.cv_status = "ok"
     s.cv_error = None
@@ -235,7 +223,6 @@ async def set_cv_failed(db: AsyncSession, session_id: int, error: str) -> None:
 
 
 async def set_cv_skipped(db: AsyncSession, session_id: int) -> None:
-    """Пользователь явно пропустил резюме"""
     s = await get_session(db, session_id)
     if not s:
         return
@@ -243,8 +230,6 @@ async def set_cv_skipped(db: AsyncSession, session_id: int) -> None:
     s.cv_error = None
     s.updated_at = dt.datetime.utcnow()
 
-
-# ============== SessionDocument ==============
 
 async def add_session_document(
     db: AsyncSession,
@@ -255,7 +240,7 @@ async def add_session_document(
     source_url: str | None = None,
     token_count: int = 0,
 ) -> SessionDocument:
-    """Добавляет документ (CV или вакансию) к сессии"""
+    """Add a CV or vacancy document to a session."""
     doc = SessionDocument(
         session_id=session_id,
         doc_type=doc_type,
@@ -270,7 +255,7 @@ async def add_session_document(
 
 
 async def get_session_document(db: AsyncSession, session_id: int, doc_type: str) -> SessionDocument | None:
-    """Получает документ определенного типа для сессии"""
+    """Get the most recent document of a given type for a session."""
     res = await db.execute(
         select(SessionDocument)
         .where(SessionDocument.session_id == session_id)
@@ -282,7 +267,6 @@ async def get_session_document(db: AsyncSession, session_id: int, doc_type: str)
 
 
 async def get_session_documents(db: AsyncSession, session_id: int) -> list[SessionDocument]:
-    """Получает все документы сессии"""
     res = await db.execute(
         select(SessionDocument)
         .where(SessionDocument.session_id == session_id)
@@ -291,19 +275,17 @@ async def get_session_documents(db: AsyncSession, session_id: int) -> list[Sessi
     return list(res.scalars().all())
 
 
-# ============== InterviewPhase ==============
-
 async def create_interview_phases(
     db: AsyncSession,
     session_id: int,
     interview_type: str,
 ) -> list[InterviewPhase]:
     """
-    Создает фазы интервью в зависимости от типа.
+    Create interview phases for a session based on interview type.
 
-    hr_soft: intro → behavioral → questions_to_company → closing
+    hr_soft:       intro → behavioral → questions_to_company → closing
     technical_hard: intro → warmup → technical_deep → closing
-    mixed: intro → warmup → technical_deep → behavioral → questions_to_company → closing
+    mixed:         intro → warmup → technical_deep → behavioral → questions_to_company → closing
     """
     phase_configs = {
         "hr_soft": [
@@ -347,7 +329,6 @@ async def create_interview_phases(
 
 
 async def get_current_phase(db: AsyncSession, session_id: int) -> InterviewPhase | None:
-    """Получает текущую активную фазу интервью"""
     res = await db.execute(
         select(InterviewPhase)
         .where(InterviewPhase.session_id == session_id)
@@ -358,7 +339,6 @@ async def get_current_phase(db: AsyncSession, session_id: int) -> InterviewPhase
 
 
 async def get_next_phase(db: AsyncSession, session_id: int) -> InterviewPhase | None:
-    """Получает следующую pending фазу"""
     res = await db.execute(
         select(InterviewPhase)
         .where(InterviewPhase.session_id == session_id)
@@ -370,7 +350,6 @@ async def get_next_phase(db: AsyncSession, session_id: int) -> InterviewPhase | 
 
 
 async def start_phase(db: AsyncSession, phase_id: int) -> None:
-    """Начинает фазу интервью"""
     res = await db.execute(select(InterviewPhase).where(InterviewPhase.id == phase_id))
     phase = res.scalar_one_or_none()
     if phase:
@@ -379,7 +358,6 @@ async def start_phase(db: AsyncSession, phase_id: int) -> None:
 
 
 async def complete_phase(db: AsyncSession, phase_id: int) -> None:
-    """Завершает фазу интервью"""
     res = await db.execute(select(InterviewPhase).where(InterviewPhase.id == phase_id))
     phase = res.scalar_one_or_none()
     if phase:
@@ -388,7 +366,6 @@ async def complete_phase(db: AsyncSession, phase_id: int) -> None:
 
 
 async def get_session_phases(db: AsyncSession, session_id: int) -> list[InterviewPhase]:
-    """Получает все фазы сессии"""
     res = await db.execute(
         select(InterviewPhase)
         .where(InterviewPhase.session_id == session_id)
@@ -396,8 +373,6 @@ async def get_session_phases(db: AsyncSession, session_id: int) -> list[Intervie
     )
     return list(res.scalars().all())
 
-
-# ============== Message ==============
 
 async def add_message(
     db: AsyncSession,
@@ -411,7 +386,7 @@ async def add_message(
     tokens_output: int = 0,
     latency_ms: int = 0,
 ) -> Message:
-    """Добавляет сообщение с опциональным LLM трекингом"""
+    """Add a message with optional LLM usage tracking."""
     msg = Message(
         session_id=session_id,
         phase_id=phase_id,
@@ -434,7 +409,7 @@ async def get_session_messages(
     limit: int = 50,
     phase_id: int | None = None,
 ) -> list[Message]:
-    """Получает сообщения сессии с опциональной фильтрацией по фазе"""
+    """Get session messages, optionally filtered by phase."""
     query = select(Message).where(Message.session_id == session_id)
     if phase_id:
         query = query.where(Message.phase_id == phase_id)
@@ -449,23 +424,21 @@ async def get_messages_for_llm_context(
     max_tokens: int = 4000,
 ) -> list[Message]:
     """
-    Получает сообщения для контекста LLM с учетом лимита токенов.
-    Возвращает последние сообщения, которые влезают в лимит.
+    Return the most recent messages that fit within a token budget.
+    Uses a heuristic of 4 characters per token.
     """
     res = await db.execute(
         select(Message)
         .where(Message.session_id == session_id)
         .order_by(Message.id.desc())
-        .limit(100)  # Берем последние 100 для анализа
+        .limit(100)
     )
     messages = list(res.scalars().all())
 
-    # Считаем токены с конца и отбираем сколько влезет
     result = []
     total_tokens = 0
 
     for msg in messages:
-        # Примерная оценка: 4 символа = 1 токен
         msg_tokens = len(msg.text) // 4 + 1
         if total_tokens + msg_tokens > max_tokens:
             break
@@ -475,10 +448,7 @@ async def get_messages_for_llm_context(
     return list(reversed(result))
 
 
-# ============== SessionStats ==============
-
 async def ensure_session_stats(db: AsyncSession, session_id: int) -> SessionStats:
-    """Создает или возвращает статистику сессии"""
     res = await db.execute(select(SessionStats).where(SessionStats.session_id == session_id))
     stats = res.scalar_one_or_none()
     if stats:
@@ -496,7 +466,7 @@ async def update_session_stats(
     tokens_output: int = 0,
     cost_usd: float = 0.0,
 ) -> None:
-    """Инкрементально обновляет статистику сессии"""
+    """Incrementally update session token and cost statistics."""
     stats = await ensure_session_stats(db, session_id)
     stats.total_tokens_input += tokens_input
     stats.total_tokens_output += tokens_output
@@ -511,7 +481,7 @@ async def get_session_stats(db: AsyncSession, session_id: int) -> SessionStats |
 
 
 async def calculate_session_duration(db: AsyncSession, session_id: int) -> int:
-    """Вычисляет длительность интервью в секундах"""
+    """Calculate interview duration in seconds from first to last message."""
     res = await db.execute(
         select(
             func.min(Message.created_at).label("first_msg"),
@@ -526,8 +496,6 @@ async def calculate_session_duration(db: AsyncSession, session_id: int) -> int:
     return 0
 
 
-# ============== InterviewFeedback ==============
-
 async def create_interview_feedback(
     db: AsyncSession,
     session_id: int,
@@ -540,7 +508,7 @@ async def create_interview_feedback(
     detailed_feedback: str | None = None,
     recommended_topics: list | None = None,
 ) -> InterviewFeedback:
-    """Создает feedback после завершения интервью"""
+    """Create a feedback record after interview completion."""
     feedback = InterviewFeedback(
         session_id=session_id,
         technical_score=technical_score,
@@ -568,7 +536,7 @@ async def add_user_feedback(
     rating: int,
     comment: str | None = None,
 ) -> None:
-    """Добавляет оценку пользователя к feedback"""
+    """Attach a user rating to an existing feedback record."""
     feedback = await get_interview_feedback(db, session_id)
     if not feedback:
         feedback = InterviewFeedback(session_id=session_id)
@@ -579,8 +547,6 @@ async def add_user_feedback(
     feedback.user_comment = comment
 
 
-# ============== Legacy ==============
-
 async def add_answer(db: AsyncSession, session_id: int, step: str, text: str) -> None:
-    """Legacy: добавление ответа"""
+    """Legacy: add an answer record."""
     db.add(Answer(session_id=session_id, step=step, text=text))

@@ -1,8 +1,4 @@
-# app/llm/prompts.py
-"""
-Система промптов для интервью.
-Шаблоны для разных типов интервью, фаз и уровней сложности.
-"""
+"""Prompt templates for interview phases, question generation, and feedback."""
 
 from dataclasses import dataclass
 from typing import Any
@@ -10,14 +6,11 @@ from typing import Any
 
 @dataclass
 class InterviewPrompts:
-    """Промпты для конкретного интервью"""
     system: str
     question_generation: str
     answer_evaluation: str
     feedback_generation: str
 
-
-# ============== System Prompts ==============
 
 SYSTEM_PROMPTS = {
     "base": """Ты — опытный интервьюер с 10+ годами опыта в IT.
@@ -70,8 +63,6 @@ SYSTEM_PROMPTS = {
 """,
 }
 
-
-# ============== Phase-Specific Prompts ==============
 
 PHASE_PROMPTS = {
     "intro": """Фаза: Знакомство и введение.
@@ -135,8 +126,6 @@ PHASE_PROMPTS = {
 }
 
 
-# ============== Question Generation ==============
-
 QUESTION_GENERATION_PROMPT = """
 Контекст интервью:
 {system_context}
@@ -159,8 +148,6 @@ QUESTION_GENERATION_PROMPT = """
 Ответь ТОЛЬКО вопросом, без пояснений.
 """
 
-
-# ============== Answer Evaluation ==============
 
 ANSWER_EVALUATION_PROMPT = """
 Контекст:
@@ -197,8 +184,6 @@ ANSWER_EVALUATION_PROMPT = """
 }}
 """
 
-
-# ============== Final Feedback ==============
 
 FEEDBACK_GENERATION_PROMPT = """
 Интервью завершено. Сгенерируй итоговый фидбек.
@@ -238,10 +223,8 @@ FEEDBACK_GENERATION_PROMPT = """
 """
 
 
-# ============== Prompt Manager ==============
-
 class PromptManager:
-    """Менеджер промптов для интервью"""
+    """Builds context-aware prompts for each interview phase."""
 
     def __init__(
         self,
@@ -260,7 +243,6 @@ class PromptManager:
         self.vacancy_summary = vacancy_summary or "Не предоставлена"
 
     def get_system_prompt(self) -> str:
-        """Возвращает системный промпт для интервью"""
         base = SYSTEM_PROMPTS["base"].format(language=self._get_language_name())
 
         specific = SYSTEM_PROMPTS.get(self.interview_type, SYSTEM_PROMPTS["mixed"])
@@ -275,7 +257,6 @@ class PromptManager:
         return f"{base}\n\n{specific}"
 
     def get_phase_instructions(self, phase_type: str) -> str:
-        """Возвращает инструкции для конкретной фазы"""
         instructions = PHASE_PROMPTS.get(phase_type, "")
         return instructions.format(difficulty=self._get_difficulty_name())
 
@@ -284,7 +265,6 @@ class PromptManager:
         phase_type: str,
         conversation_history: list[dict],
     ) -> str:
-        """Строит промпт для генерации вопроса"""
         history_text = self._format_conversation(conversation_history)
 
         return QUESTION_GENERATION_PROMPT.format(
@@ -301,7 +281,6 @@ class PromptManager:
         question: str,
         answer: str,
     ) -> str:
-        """Строит промпт для оценки ответа"""
         return ANSWER_EVALUATION_PROMPT.format(
             track=self.track,
             difficulty=self._get_difficulty_name(),
@@ -316,7 +295,6 @@ class PromptManager:
         full_conversation: list[dict],
         question_scores: list[dict],
     ) -> str:
-        """Строит промпт для финального фидбека"""
         conversation_text = self._format_conversation(full_conversation)
         scores_text = "\n".join([
             f"Q{i+1}: {s.get('overall_score', 'N/A')}/10 - {s.get('brief_feedback', '')}"
@@ -335,7 +313,6 @@ class PromptManager:
         )
 
     def _format_conversation(self, messages: list[dict], max_messages: int = 10) -> str:
-        """Форматирует историю диалога"""
         recent = messages[-max_messages:] if len(messages) > max_messages else messages
         lines = []
         for msg in recent:
@@ -344,7 +321,6 @@ class PromptManager:
         return "\n\n".join(lines)
 
     def _get_language_name(self) -> str:
-        """Возвращает название языка"""
         names = {
             "uk": "украинский",
             "ru": "русский",
@@ -353,7 +329,6 @@ class PromptManager:
         return names.get(self.language, "русский")
 
     def _get_difficulty_name(self) -> str:
-        """Возвращает название уровня"""
         names = {
             "junior": "Junior (начинающий)",
             "middle": "Middle (средний)",

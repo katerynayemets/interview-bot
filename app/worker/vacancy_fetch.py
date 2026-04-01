@@ -1,4 +1,3 @@
-# app/worker/vacancy_fetch.py
 import json
 import re
 from urllib.parse import urlparse
@@ -33,7 +32,6 @@ import re
 def _normalize_ws(s: str) -> str:
     if not s:
         return ""
-    # NBSP/ZWSP/BOM -> норм
     s = (s
          .replace("\u00a0", " ")
          .replace("\u200b", "")
@@ -43,7 +41,6 @@ def _normalize_ws(s: str) -> str:
 
 def _clean_text(text: str) -> str:
     text = _normalize_ws(text)
-    # сохраняем переносы, но выравниваем мусор
     text = re.sub(r"[ \t]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
@@ -56,19 +53,16 @@ def _clean_inline(text: str) -> str:
 def _is_probably_blocked(html: str) -> bool:
     h = (html or "").lower()
 
-    # Cloudflare / challenge
     if "cf-challenge" in h or "cf-turnstile" in h:
         return True
     if "checking your browser" in h or "attention required" in h:
         return True
     if "verify you are human" in h:
         return True
-
-    # "access denied" на блок-страницах
     if "<title>access denied" in h or "request blocked" in h:
         return True
 
-    # ВАЖНО: НЕ проверяем просто "captcha" / "recaptcha" — это часто есть на обычных страницах
+    # Do NOT check for bare "captcha"/"recaptcha" — present on many normal pages
     return False
 
 
@@ -138,10 +132,9 @@ async def parse_vacancy_url(url: str) -> str | None:
         if len(html) < 200 or _is_probably_blocked(html):
             return None
 
-
     soup = BeautifulSoup(html, "lxml")
 
-    # 1) доменные селекторы (самый надёжный путь)
+    # 1) Domain-specific CSS selectors (most reliable)
     if host == "jobs.dou.ua":
         container = soup.select_one("div.l-vacancy") or soup.select_one("article") or soup.body
         all_text = _clean_text(container.get_text("\n", strip=True) if container else soup.get_text("\n", strip=True))
@@ -150,7 +143,6 @@ async def parse_vacancy_url(url: str) -> str | None:
         title = _clean_inline(h1.get_text(" ", strip=True)) if h1 else ""
 
         if title:
-            # чтобы матч был устойчивый — тоже чистим all_text в “inline-логике”
             all_text_inline = _clean_inline(all_text)
             title_inline = _clean_inline(title)
 
@@ -168,7 +160,6 @@ async def parse_vacancy_url(url: str) -> str | None:
                 if len(chunk) >= 200:
                     return chunk
 
-        # fallback: если точный chunk не вышел — пробуем селекторы/читалку
         t = _pick_first(soup, [
             "div.l-vacancy",
             "div.b-typo",
@@ -177,7 +168,6 @@ async def parse_vacancy_url(url: str) -> str | None:
         ])
         if t:
             return t
-
 
     if host == "djinni.co":
         t = _pick_first(soup, [
@@ -208,16 +198,16 @@ async def parse_vacancy_url(url: str) -> str | None:
         if t:
             return t
 
-    # 2) JSON-LD
+    # 2) JSON-LD schema.org/JobPosting
     t = _extract_jsonld_jobposting(soup)
     if t and len(t) >= 200:
         return t
 
-    # 3) readability fallback
+    # 3) Readability algorithm fallback
     t = _extract_readability(html)
     if t:
         return t
 
-    # 4) край — весь текст страницы
+    # 4) Full page text as last resort
     raw = _clean_text(soup.get_text("\n", strip=True))
     return raw if len(raw) >= 200 else None

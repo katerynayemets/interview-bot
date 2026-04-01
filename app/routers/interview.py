@@ -1,9 +1,3 @@
-# app/routers/interview.py
-"""
-Роутер для динамического интервью с LLM.
-Заменяет захардкоженные q1/q2/q3 на динамическую генерацию вопросов.
-"""
-
 import asyncio
 
 from aiogram import Router, F
@@ -25,12 +19,9 @@ logger = get_logger(__name__)
 
 router = Router()
 
-# Максимальное количество вопросов в training режиме
 MAX_QUESTIONS_TRAINING = 5
 MAX_QUESTIONS_REAL = 15
 
-
-# ============== Helpers ==============
 
 async def _resolve_lang(state: FSMContext, chat_id: int) -> str:
     data = await state.get_data()
@@ -49,7 +40,6 @@ async def _get_session_id(state: FSMContext) -> int | None:
 
 
 async def _count_questions_asked(db, session_id: int) -> int:
-    """Считает сколько вопросов уже задано"""
     messages = await crud.get_session_messages(db, session_id, limit=100)
     return sum(1 for m in messages if m.role == "assistant" and m.kind == "question")
 
@@ -60,7 +50,7 @@ async def _generate_and_send_question(
     session_id: int,
     lang: str,
 ):
-    """Генерирует следующий вопрос через LLM и отправляет пользователю"""
+    """Generate the next interview question via LLM and send it to the user."""
 
     async with SessionLocal() as db:
         session = await crud.get_session(db, session_id)
@@ -69,7 +59,6 @@ async def _generate_and_send_question(
             await state.clear()
             return
 
-        # Проверяем лимит вопросов
         questions_asked = await _count_questions_asked(db, session_id)
         max_questions = MAX_QUESTIONS_REAL if session.mode == "real" else MAX_QUESTIONS_TRAINING
 
@@ -77,7 +66,6 @@ async def _generate_and_send_question(
             await _finish_interview(msg, state, session_id, lang)
             return
 
-        # Определяем текущую фазу
         current_phase = await crud.get_current_phase(db, session_id)
         if not current_phase:
             next_phase = await crud.get_next_phase(db, session_id)
@@ -86,22 +74,18 @@ async def _generate_and_send_question(
                 await db.commit()
                 current_phase = next_phase
             else:
-                # Все фазы пройдены
                 await _finish_interview(msg, state, session_id, lang)
                 return
 
-        # Проверяем, пора ли переходить к следующей фазе
         phase_config = current_phase.phase_config or {}
         phase_questions_limit = phase_config.get("questions_count", 3)
 
-        # Считаем вопросы в текущей фазе
         phase_messages = await crud.get_session_messages(
             db, session_id, limit=100, phase_id=current_phase.id
         )
         phase_questions = sum(1 for m in phase_messages if m.role == "assistant" and m.kind == "question")
 
         if phase_questions >= phase_questions_limit:
-            # Завершаем фазу и переходим к следующей
             await crud.complete_phase(db, current_phase.id)
             next_phase = await crud.get_next_phase(db, session_id)
             if next_phase:
@@ -115,7 +99,6 @@ async def _generate_and_send_question(
 
         phase_type = current_phase.phase_type
 
-        # Строим контекст для LLM
         context = await build_interview_context(db, session_id, include_full_documents=True)
 
         prompt_manager = PromptManager(
@@ -136,7 +119,6 @@ async def _generate_and_send_question(
             ],
         )
 
-        # Выбираем модель
         if session.mode == "real":
             model = settings.LLM_MODEL_REAL
             max_tokens = settings.LLM_MAX_TOKENS_REAL
@@ -144,7 +126,6 @@ async def _generate_and_send_question(
             model = settings.LLM_MODEL_TRAINING
             max_tokens = settings.LLM_MAX_TOKENS_TRAINING
 
-    # Отправляем "печатает..."
     await msg.bot.send_chat_action(msg.chat.id, "typing")
 
     try:
@@ -171,7 +152,7 @@ async def _generate_and_send_question(
 
         question_text = response.content.strip()
 
-        # Retry с увеличенным бюджетом, если ответ пустой (reasoning models)
+        # Retry with a larger token budget for reasoning models
         if not question_text and response.finish_reason == "length":
             logger.warning(
                 f"Empty LLM response (finish_reason=length), retrying with 2x tokens",
@@ -185,9 +166,8 @@ async def _generate_and_send_question(
             question_text = response.content.strip()
 
         if not question_text:
-            question_text = "..."  # fallback, чтобы не слать пустое сообщение
+            question_text = "..."
 
-        # Сохраняем в БД
         async with SessionLocal() as db:
             current_phase = await crud.get_current_phase(db, session_id)
             phase_id = current_phase.id if current_phase else None
@@ -223,12 +203,10 @@ async def _generate_and_send_question(
             action="llm_question",
         )
 
-        # Отправляем вопрос
         question_number = questions_asked + 1
         prefix = f"**{tr(lang, 'question_label')} {question_number}/{max_questions}**\n\n"
         await msg.answer(prefix + question_text)
 
-        # Запускаем таймер если real режим
         async with SessionLocal() as db:
             session = await crud.get_session(db, session_id)
 
@@ -244,7 +222,6 @@ async def _generate_and_send_question(
     except Exception as e:
         logger.exception(f"LLM error: {e}", session_id=session_id, chat_id=msg.chat.id)
         await msg.answer(tr(lang, "llm_error"))
-        # Не ломаем flow - остаемся в том же состоянии
 
 
 async def _timer_warning(
@@ -254,22 +231,20 @@ async def _timer_warning(
     lang: str,
     question_number: int,
 ):
-    """Таймер для стресс-эффекта в real режиме"""
+    """Send a warning and expiry notification for real-mode answer timers."""
     timer_seconds = settings.INTERVIEW_TIMER_SECONDS
 
-    # Ждём 2/3 времени и предупреждаем
     await asyncio.sleep(timer_seconds * 2 // 3)
 
     data = await state.get_data()
     if data.get("question_number") != question_number:
-        return  # Уже ответил, таймер неактуален
+        return
     if data.get("session_id") != session_id:
         return
 
     remaining = timer_seconds // 3
     await msg.answer(tr(lang, "timer_warning").format(seconds=remaining))
 
-    # Ждём оставшееся время
     await asyncio.sleep(remaining)
 
     data = await state.get_data()
@@ -287,10 +262,9 @@ async def _finish_interview(
     session_id: int,
     lang: str,
 ):
-    """Завершает интервью и генерирует фидбек"""
+    """Complete the interview and generate LLM feedback."""
     await msg.answer(tr(lang, "interview_finishing"))
 
-    # Завершаем все активные фазы
     async with SessionLocal() as db:
         current_phase = await crud.get_current_phase(db, session_id)
         if current_phase:
@@ -300,7 +274,6 @@ async def _finish_interview(
 
     await state.set_state(InterviewFSM.generating)
 
-    # Генерируем фидбек
     try:
         await msg.bot.send_chat_action(msg.chat.id, "typing")
         await _generate_feedback(msg, session_id, lang)
@@ -308,11 +281,9 @@ async def _finish_interview(
         logger.exception(f"Feedback error: {e}", session_id=session_id)
         await msg.answer(tr(lang, "feedback_error"))
 
-    # Завершаем
     async with SessionLocal() as db:
         await crud.update_session_stage(db, session_id, "done")
 
-        # Обновляем статистику пользователя
         user = await crud.get_user_settings(db, msg.chat.id)
         if user:
             user.total_interviews += 1
@@ -322,7 +293,6 @@ async def _finish_interview(
                 user.total_spent_usd += stats.estimated_cost_usd
         await db.commit()
 
-    # Показываем кнопки после завершения
     kb = InlineKeyboardBuilder()
     kb.button(text=tr(lang, "btn_rate_interview"), callback_data="rate:start")
     kb.button(text=tr(lang, "btn_new_interview"), callback_data="new_interview")
@@ -334,7 +304,7 @@ async def _finish_interview(
 
 
 async def _generate_feedback(msg: Message, session_id: int, lang: str):
-    """Генерирует итоговый фидбек через LLM"""
+    """Generate comprehensive feedback via LLM and persist to the database."""
 
     async with SessionLocal() as db:
         context = await build_interview_context(db, session_id, include_full_documents=True)
@@ -374,7 +344,7 @@ async def _generate_feedback(msg: Message, session_id: int, lang: str):
             max_tokens=4096,
         )
 
-        # Retry если пустой ответ (reasoning models могут съесть все токены)
+        # Retry for reasoning models that may exhaust the token budget
         if not response.content.strip() and response.finish_reason == "length":
             logger.warning("Empty feedback response, retrying with more tokens", session_id=session_id)
             response = await llm.chat(
@@ -383,7 +353,6 @@ async def _generate_feedback(msg: Message, session_id: int, lang: str):
                 max_tokens=8192,
             )
 
-        # Парсим JSON фидбек
         import json
         feedback_data = {}
         try:
@@ -395,7 +364,6 @@ async def _generate_feedback(msg: Message, session_id: int, lang: str):
         except (json.JSONDecodeError, ValueError):
             feedback_data = {}
 
-        # Сохраняем фидбек
         await crud.create_interview_feedback(
             db, session_id,
             technical_score=feedback_data.get("technical_score"),
@@ -408,7 +376,6 @@ async def _generate_feedback(msg: Message, session_id: int, lang: str):
             recommended_topics=feedback_data.get("recommended_topics"),
         )
 
-        # Обновляем статистику
         cost = estimate_cost(
             settings.LLM_PROVIDER, model,
             response.tokens_input, response.tokens_output,
@@ -421,13 +388,11 @@ async def _generate_feedback(msg: Message, session_id: int, lang: str):
         )
         await db.commit()
 
-    # Форматируем и отправляем
     feedback_text = _format_feedback(feedback_data, lang)
     await msg.answer(feedback_text, parse_mode="Markdown")
 
 
 def _format_feedback(feedback: dict, lang: str) -> str:
-    """Форматирует фидбек для Telegram"""
     if not feedback:
         return tr(lang, "feedback_empty")
 
@@ -469,11 +434,9 @@ def _format_feedback(feedback: dict, lang: str) -> str:
     return "\n".join(lines)
 
 
-# ============== Handlers ==============
-
 @router.message(InterviewFSM.interview_phase, F.text & ~F.text.startswith("/"))
 async def handle_answer(msg: Message, state: FSMContext):
-    """Обрабатывает ответ пользователя во время интервью"""
+    """Handle user answer during the interview phase."""
     lang = await _resolve_lang(state, msg.chat.id)
     session_id = await _get_session_id(state)
 
@@ -482,7 +445,6 @@ async def handle_answer(msg: Message, state: FSMContext):
         await state.clear()
         return
 
-    # Сохраняем ответ пользователя
     async with SessionLocal() as db:
         current_phase = await crud.get_current_phase(db, session_id)
         phase_id = current_phase.id if current_phase else None
@@ -496,21 +458,18 @@ async def handle_answer(msg: Message, state: FSMContext):
         )
         await db.commit()
 
-    # Сбрасываем таймер
     data = await state.get_data()
     await state.update_data(
         question_number=(data.get("question_number", 0) + 1),
         timer_active=False,
     )
 
-    # Генерируем следующий вопрос
     await _generate_and_send_question(msg, state, session_id, lang)
 
 
-# Обратная совместимость: legacy q1/q2/q3
 @router.message(InterviewFSM.q1, F.text & ~F.text.startswith("/"))
 async def q1_legacy(msg: Message, state: FSMContext):
-    """Legacy handler - перенаправляет в LLM flow"""
+    """Legacy handler — redirects to LLM flow."""
     lang = await _resolve_lang(state, msg.chat.id)
     session_id = await _get_session_id(state)
     if not session_id:
@@ -528,29 +487,24 @@ async def q1_legacy(msg: Message, state: FSMContext):
 
 @router.message(InterviewFSM.q2, F.text & ~F.text.startswith("/"))
 async def q2_legacy(msg: Message, state: FSMContext):
-    """Legacy handler - перенаправляет в LLM flow"""
+    """Legacy handler — redirects to LLM flow."""
     await q1_legacy(msg, state)
 
 
 @router.message(InterviewFSM.q3, F.text & ~F.text.startswith("/"))
 async def q3_legacy(msg: Message, state: FSMContext):
-    """Legacy handler - перенаправляет в LLM flow"""
+    """Legacy handler — redirects to LLM flow."""
     await q1_legacy(msg, state)
 
 
-# ============== Post-Interview Callbacks ==============
-
 @router.callback_query(F.data == "new_interview")
 async def new_interview(cb: CallbackQuery, state: FSMContext):
-    """Начинает новое интервью"""
     await cb.answer()
-    # Имитируем /start
     await cb.message.answer("/start")
 
 
 @router.callback_query(F.data == "rate:start")
 async def rate_interview_start(cb: CallbackQuery, state: FSMContext):
-    """Начинает оценку интервью"""
     lang = await _resolve_lang(state, cb.message.chat.id)
     await cb.answer()
 
@@ -565,7 +519,7 @@ async def rate_interview_start(cb: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("rate:") & ~F.data.in_({"rate:start"}))
 async def rate_interview(cb: CallbackQuery, state: FSMContext):
-    """Сохраняет оценку пользователя"""
+    """Save the user's interview rating."""
     lang = await _resolve_lang(state, cb.message.chat.id)
     rating = int(cb.data.split(":")[1])
     await cb.answer()

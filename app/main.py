@@ -11,7 +11,6 @@ from app.db.session import engine
 from app.logging_config import setup_logging, get_logger
 from app.middleware import setup_middlewares
 
-# Настраиваем логирование при импорте модуля
 setup_logging(
     log_level=settings.LOG_LEVEL if hasattr(settings, "LOG_LEVEL") else "INFO",
     log_to_file=True,
@@ -30,8 +29,7 @@ from aiogram.methods import SetChatMenuButton
 
 
 async def setup_commands(bot):
-    """Настройка команд бота для меню"""
-    # RU
+    """Configure bot command menu for all supported locales."""
     await bot.set_my_commands(
         commands=[
             BotCommand(command="start", description="Запуск / новый прогон"),
@@ -45,7 +43,6 @@ async def setup_commands(bot):
         language_code="ru",
     )
 
-    # UK
     await bot.set_my_commands(
         commands=[
             BotCommand(command="start", description="Старт / новий прогін"),
@@ -59,7 +56,6 @@ async def setup_commands(bot):
         language_code="uk",
     )
 
-    # EN
     await bot.set_my_commands(
         commands=[
             BotCommand(command="start", description="Start / new run"),
@@ -73,7 +69,6 @@ async def setup_commands(bot):
         language_code="en",
     )
 
-    # Попросим Telegram показать меню именно с командами
     await bot(SetChatMenuButton(menu_button=MenuButtonCommands()))
 
 
@@ -85,16 +80,14 @@ async def on_startup():
 
     dp = await create_dispatcher()
 
-    # Регистрируем middleware
     setup_middlewares(dp)
     logger.info("Middlewares registered")
 
-    # Create tables (fallback, основное через Alembic)
+    # Fallback table creation; primary schema management is via Alembic
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables verified")
 
-    # Настраиваем команды бота
     try:
         await setup_commands(bot)
         logger.info("Bot commands configured")
@@ -113,7 +106,6 @@ async def on_startup():
         ))
         logger.info(f"Webhook mode: {settings.PUBLIC_URL}{settings.WEBHOOK_PATH}")
     else:
-        # polling mode for local quick check
         polling_task = asyncio.create_task(dp.start_polling(bot))
         logger.info("Polling mode started")
 
@@ -140,7 +132,7 @@ async def on_shutdown():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
+    """Health check endpoint."""
     return {
         "ok": True,
         "mode": settings.BOT_MODE,
@@ -153,7 +145,7 @@ async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
-    """Telegram webhook endpoint"""
+    """Telegram webhook endpoint."""
     if settings.BOT_MODE != "webhook":
         raise HTTPException(400, "Webhook endpoint is disabled in polling mode")
 
@@ -168,31 +160,26 @@ async def telegram_webhook(
         await dp.feed_update(bot, update)
     except Exception as e:
         logger.exception(f"Error processing update: {e}")
-        # Не возвращаем ошибку Telegram'у, иначе он будет повторять запрос
+        # Suppress error so Telegram does not retry the update
         pass
 
     return {"ok": True}
 
 
-# ============== Admin Endpoints (для будущей админки) ==============
-
 @app.get("/api/stats")
 async def get_stats():
-    """Статистика для админки (требует авторизации в будущем)"""
+    """Admin statistics endpoint."""
     from sqlalchemy import select, func
     from app.db.session import SessionLocal
     from app.db.models import UserSettings, Session, UserActivity, ErrorLog
 
     async with SessionLocal() as db:
-        # Считаем пользователей
         users_result = await db.execute(select(func.count(UserSettings.chat_id)))
         total_users = users_result.scalar() or 0
 
-        # Считаем сессии
         sessions_result = await db.execute(select(func.count(Session.id)))
         total_sessions = sessions_result.scalar() or 0
 
-        # Считаем ошибки за последние 24 часа
         from datetime import datetime, timedelta
         day_ago = datetime.utcnow() - timedelta(days=1)
         errors_result = await db.execute(

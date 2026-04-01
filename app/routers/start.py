@@ -1,4 +1,3 @@
-# app/routers/start.py
 import asyncio
 from urllib.parse import urlparse
 
@@ -22,8 +21,6 @@ from app.worker.tasks import fetch_vacancy
 
 router = Router()
 
-
-# ============== Keyboards ==============
 
 def track_kb(lang: str):
     kb = InlineKeyboardBuilder()
@@ -50,7 +47,6 @@ def mode_kb(lang: str):
 
 
 def interview_type_kb(lang: str):
-    """Клавиатура выбора типа интервью"""
     kb = InlineKeyboardBuilder()
     kb.button(text=tr(lang, "btn_interview_mixed"), callback_data="itype:mixed")
     kb.button(text=tr(lang, "btn_interview_hr_soft"), callback_data="itype:hr_soft")
@@ -60,7 +56,6 @@ def interview_type_kb(lang: str):
 
 
 def difficulty_kb(lang: str):
-    """Клавиатура выбора уровня сложности"""
     kb = InlineKeyboardBuilder()
     kb.button(text=tr(lang, "btn_difficulty_junior"), callback_data="diff:junior")
     kb.button(text=tr(lang, "btn_difficulty_middle"), callback_data="diff:middle")
@@ -71,7 +66,6 @@ def difficulty_kb(lang: str):
 
 
 def cancel_skip_kb(lang: str):
-    """Клавиатура с кнопками Пропустить и Отмена"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=tr(lang, "btn_skip"))],
@@ -88,10 +82,7 @@ def cancel_kb(lang: str):
     )
 
 
-# ============== Helpers ==============
-
 async def _get_wizard_data(chat_id: int, state: FSMContext):
-    """Получает настройки из FSM или из БД"""
     data = await state.get_data()
     async with SessionLocal() as db:
         us = await crud.ensure_user_settings(db, chat_id)
@@ -108,7 +99,7 @@ async def _get_wizard_data(chat_id: int, state: FSMContext):
 
 
 async def _start_interview(msg: Message, state: FSMContext, session_id: int, lang: str):
-    """Начинает интервью после сбора данных — запускает LLM flow"""
+    """Transition to the interview phase and generate the first LLM question."""
     async with SessionLocal() as db:
         s = await crud.get_session(db, session_id)
         if not s:
@@ -116,39 +107,31 @@ async def _start_interview(msg: Message, state: FSMContext, session_id: int, lan
             return
         s.stage = "interview"
 
-        # Создаем фазы интервью
         await crud.create_interview_phases(db, session_id, s.interview_type)
-
-        # Инициализируем статистику сессии
         await crud.ensure_session_stats(db, session_id)
         await db.commit()
 
     await msg.answer(tr(lang, "interview_starting"), reply_markup=ReplyKeyboardRemove())
     await state.set_state(InterviewFSM.interview_phase)
 
-    # Генерируем первый вопрос через LLM
     from app.routers.interview import _generate_and_send_question
     await _generate_and_send_question(msg, state, session_id, lang)
 
 
 async def _check_ready_to_start(db, session_id: int) -> bool:
-    """Проверяет, готовы ли данные для старта интервью"""
     s = await crud.get_session(db, session_id)
     if not s:
         return False
 
-    # Нужен хотя бы один: CV или vacancy в статусе ok/skipped
     cv_ready = s.cv_status in ("ok", "skipped")
     vacancy_ready = s.vacancy_status in ("ok", "skipped")
-
-    # Хотя бы один должен быть ok (не оба skipped)
     has_data = s.cv_status == "ok" or s.vacancy_status == "ok"
 
     return cv_ready and vacancy_ready and has_data
 
 
 async def _wait_vacancy_then_start(msg: Message, state: FSMContext, session_id: int, lang: str):
-    """Ждет завершения парсинга вакансии и стартует интервью"""
+    """Poll until vacancy parsing completes, then start the interview."""
     for _ in range(15):
         await asyncio.sleep(1.5)
 
@@ -173,8 +156,6 @@ async def _wait_vacancy_then_start(msg: Message, state: FSMContext, session_id: 
 
     await msg.answer(tr(lang, "vacancy_still_pending"))
 
-
-# ============== Wizard Handlers ==============
 
 @router.message(Command("start"))
 async def cmd_start(msg: Message, state: FSMContext):
@@ -228,8 +209,6 @@ async def choose_mode(cb: CallbackQuery, state: FSMContext):
     lang, *_ = await _get_wizard_data(cb.message.chat.id, state)
     await state.update_data(mode=mode)
     await cb.answer()
-
-    # Переходим к выбору типа интервью
     await cb.message.answer(tr(lang, "choose_interview_type"), reply_markup=interview_type_kb(lang))
     await state.set_state(InterviewFSM.choose_interview_type)
 
@@ -244,8 +223,6 @@ async def choose_interview_type(cb: CallbackQuery, state: FSMContext):
     lang, *_ = await _get_wizard_data(cb.message.chat.id, state)
     await state.update_data(interview_type=interview_type)
     await cb.answer()
-
-    # Переходим к выбору уровня сложности
     await cb.message.answer(tr(lang, "choose_difficulty"), reply_markup=difficulty_kb(lang))
     await state.set_state(InterviewFSM.choose_difficulty)
 
@@ -261,7 +238,6 @@ async def choose_difficulty(cb: CallbackQuery, state: FSMContext):
     await state.update_data(difficulty=difficulty)
     await cb.answer()
 
-    # Создаем сессию
     async with SessionLocal() as db:
         s = await crud.create_session(
             db, cb.message.chat.id,
@@ -275,8 +251,6 @@ async def choose_difficulty(cb: CallbackQuery, state: FSMContext):
     await state.set_state(InterviewFSM.waiting_vacancy)
 
 
-# ============== Data Collection: Vacancy ==============
-
 @router.message(InterviewFSM.waiting_vacancy, F.text & ~F.text.startswith("/"))
 async def intake_vacancy(msg: Message, state: FSMContext):
     lang, *_ = await _get_wizard_data(msg.chat.id, state)
@@ -289,11 +263,9 @@ async def intake_vacancy(msg: Message, state: FSMContext):
 
     text = (msg.text or "").strip()
 
-    # Проверяем кнопку "Пропустить"
-    if text == tr(lang, "btn_skip") or text == tr("uk", "btn_skip") or text == tr("ru", "btn_skip") or text == tr("en", "btn_skip"):
+    if text in (tr(lang, "btn_skip"), tr("uk", "btn_skip"), tr("ru", "btn_skip"), tr("en", "btn_skip")):
         async with SessionLocal() as db:
             s = await crud.get_session(db, session_id)
-            # Можно пропустить только если CV уже есть
             if s and s.cv_status == "ok":
                 await crud.set_vacancy_skipped(db, session_id)
                 await db.commit()
@@ -303,7 +275,6 @@ async def intake_vacancy(msg: Message, state: FSMContext):
                     await _start_interview(msg, state, session_id, lang)
                     return
             else:
-                # CV еще нет - идем собирать CV
                 await crud.set_vacancy_skipped(db, session_id)
                 await db.commit()
                 await msg.answer(tr(lang, "vacancy_skipped"))
@@ -312,13 +283,11 @@ async def intake_vacancy(msg: Message, state: FSMContext):
         await state.set_state(InterviewFSM.waiting_cv)
         return
 
-    # Проверяем кнопку "Отмена"
-    if text == tr(lang, "btn_cancel") or text == tr("uk", "btn_cancel") or text == tr("ru", "btn_cancel") or text == tr("en", "btn_cancel"):
+    if text in (tr(lang, "btn_cancel"), tr("uk", "btn_cancel"), tr("ru", "btn_cancel"), tr("en", "btn_cancel")):
         await state.clear()
         await msg.answer(tr(lang, "cancel_ok"), reply_markup=ReplyKeyboardRemove())
         return
 
-    # Определяем URL или текст
     is_url = False
     try:
         p = urlparse(text)
@@ -340,7 +309,6 @@ async def intake_vacancy(msg: Message, state: FSMContext):
                 asyncio.create_task(_wait_vacancy_then_start(msg, state, session_id, lang))
                 return
         else:
-            # Обрабатываем текст вакансии
             processed = process_vacancy_text(text)
 
             await crud.set_vacancy_ok(
@@ -349,7 +317,6 @@ async def intake_vacancy(msg: Message, state: FSMContext):
                 vacancy_summary=processed.summary
             )
 
-            # Сохраняем в SessionDocument
             await crud.add_session_document(
                 db, session_id,
                 doc_type="vacancy",
@@ -368,8 +335,6 @@ async def intake_vacancy(msg: Message, state: FSMContext):
     await state.set_state(InterviewFSM.waiting_cv)
 
 
-# ============== Data Collection: CV ==============
-
 @router.message(InterviewFSM.waiting_cv, (F.text & ~F.text.startswith("/")) | F.document)
 async def intake_cv(msg: Message, state: FSMContext):
     lang, *_ = await _get_wizard_data(msg.chat.id, state)
@@ -382,12 +347,10 @@ async def intake_cv(msg: Message, state: FSMContext):
 
     text = (msg.text or "").strip()
 
-    # Проверяем кнопку "Пропустить"
-    if text == tr(lang, "btn_skip") or text == tr("uk", "btn_skip") or text == tr("ru", "btn_skip") or text == tr("en", "btn_skip"):
+    if text in (tr(lang, "btn_skip"), tr("uk", "btn_skip"), tr("ru", "btn_skip"), tr("en", "btn_skip")):
         async with SessionLocal() as db:
             s = await crud.get_session(db, session_id)
             if s and s.vacancy_status == "ok":
-                # Вакансия готова — пропускаем CV и стартуем
                 await crud.set_cv_skipped(db, session_id)
                 await db.commit()
                 await msg.answer(tr(lang, "cv_skipped"))
@@ -396,7 +359,6 @@ async def intake_cv(msg: Message, state: FSMContext):
                     await _start_interview(msg, state, session_id, lang)
                     return
             elif s and s.vacancy_status == "pending":
-                # Вакансия ещё парсится — пропускаем CV и ждём вакансию
                 await crud.set_cv_skipped(db, session_id)
                 await db.commit()
                 await msg.answer(tr(lang, "cv_skipped"))
@@ -404,13 +366,11 @@ async def intake_cv(msg: Message, state: FSMContext):
                 asyncio.create_task(_wait_vacancy_then_start(msg, state, session_id, lang))
                 return
             else:
-                # Нет ни CV ни vacancy - нельзя пропустить
                 await msg.answer(tr(lang, "need_cv_or_vacancy"))
                 return
         return
 
-    # Проверяем кнопку "Отмена"
-    if text == tr(lang, "btn_cancel") or text == tr("uk", "btn_cancel") or text == tr("ru", "btn_cancel") or text == tr("en", "btn_cancel"):
+    if text in (tr(lang, "btn_cancel"), tr("uk", "btn_cancel"), tr("ru", "btn_cancel"), tr("en", "btn_cancel")):
         await state.clear()
         await msg.answer(tr(lang, "cancel_ok"), reply_markup=ReplyKeyboardRemove())
         return
@@ -456,29 +416,24 @@ async def intake_cv(msg: Message, state: FSMContext):
         await msg.answer(tr(lang, "cv_too_short"))
         return
 
-    # Обрабатываем CV: анонимизация, токены, summary
     processed = process_cv_text(cv_text)
-
-    # Определяем уровень из CV
     detected_difficulty = detect_seniority(cv_text)
 
     async with SessionLocal() as db:
         await crud.set_cv_ok(
             db, session_id,
-            cv_text=processed.anonymized,  # сохраняем анонимизированный
+            cv_text=processed.anonymized,
             cv_summary=processed.summary
         )
 
-        # Обновляем difficulty если определили из CV
         s = await crud.get_session(db, session_id)
         if s and detected_difficulty != "middle":
             await crud.update_session_difficulty(db, session_id, detected_difficulty)
 
-        # Сохраняем в SessionDocument
         await crud.add_session_document(
             db, session_id,
             doc_type="cv",
-            raw_text=cv_text,  # оригинал (не сохраняем долго, можно убрать)
+            raw_text=cv_text,
             processed_text=processed.anonymized,
             token_count=processed.token_count
         )
@@ -499,7 +454,6 @@ async def intake_cv(msg: Message, state: FSMContext):
         return
 
     if s and s.vacancy_status == "skipped":
-        # Vacancy пропущена, CV есть - можно стартовать
         if await _check_ready_to_start(db, session_id):
             await _start_interview(msg, state, session_id, lang)
             return
@@ -507,8 +461,6 @@ async def intake_cv(msg: Message, state: FSMContext):
     await msg.answer(tr(lang, "vacancy_need_text"))
     await state.set_state(InterviewFSM.waiting_vacancy)
 
-
-# ============== Cancel Handlers ==============
 
 @router.message(Command("cancel"))
 async def cmd_cancel(msg: Message, state: FSMContext):

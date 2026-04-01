@@ -1,8 +1,3 @@
-# app/middleware.py
-"""
-Middleware для логирования, обработки ошибок и трекинга активности.
-"""
-
 import traceback
 import time
 from typing import Any, Awaitable, Callable
@@ -18,10 +13,7 @@ logger = get_logger(__name__)
 
 
 class LoggingMiddleware(BaseMiddleware):
-    """
-    Middleware для логирования всех входящих сообщений и callback.
-    Записывает в лог и в БД для админки.
-    """
+    """Log all incoming messages and callbacks; persist activity and errors to DB."""
 
     async def __call__(
         self,
@@ -31,7 +23,6 @@ class LoggingMiddleware(BaseMiddleware):
     ) -> Any:
         start_time = time.time()
 
-        # Извлекаем информацию о пользователе
         chat_id = None
         username = None
         first_name = None
@@ -56,7 +47,6 @@ class LoggingMiddleware(BaseMiddleware):
             first_name = event.from_user.first_name if event.from_user else None
             action = f"callback:{event.data}"
 
-        # Логируем входящее событие
         logger.info(
             f"Incoming: {action}",
             chat_id=chat_id,
@@ -64,7 +54,6 @@ class LoggingMiddleware(BaseMiddleware):
             extra={"username": username, "first_name": first_name}
         )
 
-        # Получаем session_id из FSM если есть
         session_id = None
         state = data.get("state")
         if state:
@@ -74,7 +63,6 @@ class LoggingMiddleware(BaseMiddleware):
             except Exception:
                 pass
 
-        # Вызываем handler
         result = None
         error_occurred = False
         try:
@@ -83,7 +71,6 @@ class LoggingMiddleware(BaseMiddleware):
             error_occurred = True
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # Логируем ошибку
             logger.exception(
                 f"Error in handler: {type(e).__name__}: {str(e)}",
                 chat_id=chat_id,
@@ -92,7 +79,6 @@ class LoggingMiddleware(BaseMiddleware):
                 error=str(e)
             )
 
-            # Сохраняем ошибку в БД
             await self._log_error_to_db(
                 chat_id=chat_id,
                 session_id=session_id,
@@ -100,7 +86,6 @@ class LoggingMiddleware(BaseMiddleware):
                 action=action
             )
 
-            # Пробуем отправить пользователю сообщение об ошибке
             try:
                 if isinstance(event, Message):
                     await event.answer(
@@ -111,12 +96,11 @@ class LoggingMiddleware(BaseMiddleware):
             except Exception:
                 pass
 
-            raise  # Пробрасываем ошибку дальше
+            raise
 
         finally:
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # Записываем активность в БД (асинхронно, не блокируем)
             try:
                 await self._log_activity_to_db(
                     chat_id=chat_id,
@@ -144,13 +128,12 @@ class LoggingMiddleware(BaseMiddleware):
         first_name: str | None = None,
         is_error: bool = False,
     ) -> None:
-        """Записывает активность в БД"""
+        """Save user activity to database."""
         if not chat_id:
             return
 
         try:
             async with SessionLocal() as db:
-                # Обновляем данные пользователя если изменились
                 from sqlalchemy import select
                 result = await db.execute(
                     select(UserSettings).where(UserSettings.chat_id == chat_id)
@@ -163,7 +146,6 @@ class LoggingMiddleware(BaseMiddleware):
                     if first_name and user.first_name != first_name:
                         user.first_name = first_name
 
-                # Создаем запись активности
                 activity = UserActivity(
                     chat_id=chat_id,
                     session_id=session_id,
@@ -185,7 +167,7 @@ class LoggingMiddleware(BaseMiddleware):
         error: Exception,
         action: str,
     ) -> None:
-        """Записывает ошибку в БД"""
+        """Save error details to database."""
         try:
             async with SessionLocal() as db:
                 error_log = ErrorLog(
@@ -204,9 +186,7 @@ class LoggingMiddleware(BaseMiddleware):
 
 
 class ThrottlingMiddleware(BaseMiddleware):
-    """
-    Простой throttling для защиты от спама.
-    """
+    """Rate-limit users to prevent spam (default: 0.5 req/s per user)."""
 
     def __init__(self, rate_limit: float = 0.5):
         self.rate_limit = rate_limit
@@ -231,11 +211,10 @@ class ThrottlingMiddleware(BaseMiddleware):
 
             if now - last_request < self.rate_limit:
                 logger.debug(f"Throttled user {chat_id}")
-                return None  # Игнорируем слишком частые запросы
+                return None
 
             self.user_last_request[chat_id] = now
 
-            # Очищаем старые записи (старше 1 часа)
             if len(self.user_last_request) > 10000:
                 cutoff = now - 3600
                 self.user_last_request = {
@@ -246,9 +225,7 @@ class ThrottlingMiddleware(BaseMiddleware):
 
 
 class BillingCheckMiddleware(BaseMiddleware):
-    """
-    Проверяет баланс/лимиты пользователя перед real-mode интервью.
-    """
+    """Placeholder for billing/quota enforcement before paid interview features."""
 
     async def __call__(
         self,
@@ -256,19 +233,13 @@ class BillingCheckMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        # Эта middleware будет активирована позже для платных функций
-        # Пока просто пропускаем
         return await handler(event, data)
 
 
 def setup_middlewares(dp) -> None:
-    """Регистрирует все middleware в dispatcher"""
-    # Порядок важен: первый добавленный = первый вызванный
+    """Register all middleware on the dispatcher. Order matters: first registered = first called."""
     dp.message.middleware(ThrottlingMiddleware(rate_limit=0.3))
     dp.callback_query.middleware(ThrottlingMiddleware(rate_limit=0.3))
 
     dp.message.middleware(LoggingMiddleware())
     dp.callback_query.middleware(LoggingMiddleware())
-
-    # BillingCheckMiddleware добавим позже когда включим биллинг
-    # dp.message.middleware(BillingCheckMiddleware())

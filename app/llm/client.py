@@ -1,8 +1,4 @@
-# app/llm/client.py
-"""
-Абстрактный клиент для LLM провайдеров.
-Поддержка OpenAI, Anthropic Claude, и других.
-"""
+"""Abstract LLM client supporting OpenAI and Anthropic providers."""
 
 import time
 import os
@@ -19,7 +15,6 @@ logger = get_logger(__name__)
 
 @dataclass
 class LLMResponse:
-    """Ответ от LLM"""
     content: str
     model: str
     tokens_input: int
@@ -33,7 +28,6 @@ class LLMResponse:
         return self.tokens_input + self.tokens_output
 
     def estimate_cost(self, input_price_per_1k: float, output_price_per_1k: float) -> float:
-        """Оценка стоимости запроса"""
         return (
             (self.tokens_input / 1000) * input_price_per_1k +
             (self.tokens_output / 1000) * output_price_per_1k
@@ -42,13 +36,12 @@ class LLMResponse:
 
 @dataclass
 class ChatMessage:
-    """Сообщение для чата"""
     role: str  # system | user | assistant
     content: str
 
 
 class LLMClient(ABC):
-    """Базовый класс для LLM клиентов"""
+    """Abstract base class for LLM provider clients."""
 
     def __init__(self, api_key: str, model: str, timeout: float = 60.0):
         self.api_key = api_key
@@ -62,7 +55,6 @@ class LLMClient(ABC):
         temperature: float = 0.7,
         max_tokens: int = 1024,
     ) -> LLMResponse:
-        """Отправляет запрос к LLM и возвращает ответ"""
         pass
 
     @abstractmethod
@@ -72,7 +64,6 @@ class LLMClient(ABC):
         temperature: float = 0.7,
         max_tokens: int = 1024,
     ) -> AsyncIterator[str]:
-        """Стриминг ответа от LLM"""
         pass
 
     @property
@@ -82,16 +73,15 @@ class LLMClient(ABC):
 
 
 class OpenAIClient(LLMClient):
-    """Клиент для OpenAI API (GPT-4, GPT-3.5, GPT-5, o1)"""
+    """OpenAI API client (GPT-4, GPT-4o, GPT-5, o1 series)."""
 
     BASE_URL = "https://api.openai.com/v1"
 
-    # Модели, которые требуют max_completion_tokens вместо max_tokens
+    # Models that require max_completion_tokens instead of max_tokens
     NEW_API_MODELS = {"o1", "o1-mini", "o1-preview", "o3", "o3-mini", "o4-mini"}
-    # Префиксы моделей, использующих новый API
     NEW_API_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
-    # Цены за 1K токенов (примерные, могут меняться)
+    # Approximate pricing per 1K tokens
     PRICING = {
         "gpt-4": {"input": 0.03, "output": 0.06},
         "gpt-4-turbo": {"input": 0.01, "output": 0.03},
@@ -102,7 +92,6 @@ class OpenAIClient(LLMClient):
     }
 
     def _uses_new_api(self) -> bool:
-        """Проверяет, использует ли модель новый API (max_completion_tokens)"""
         if self.model in self.NEW_API_MODELS:
             return True
         return any(self.model.startswith(prefix) for prefix in self.NEW_API_PREFIXES)
@@ -119,7 +108,6 @@ class OpenAIClient(LLMClient):
     ) -> LLMResponse:
         start_time = time.time()
 
-        # Новые модели (GPT-5, o1, o3) используют max_completion_tokens
         if self._uses_new_api():
             token_param = {"max_completion_tokens": max_tokens}
         else:
@@ -130,7 +118,7 @@ class OpenAIClient(LLMClient):
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             **token_param,
         }
-        # Новые модели (gpt-5, o1, o3) не поддерживают кастомный temperature
+        # o1/o3/gpt-5 models do not support a custom temperature
         if not self._uses_new_api():
             body["temperature"] = temperature
 
@@ -213,12 +201,12 @@ class OpenAIClient(LLMClient):
 
 
 class AnthropicClient(LLMClient):
-    """Клиент для Anthropic API (Claude)"""
+    """Anthropic API client (Claude models)."""
 
     BASE_URL = "https://api.anthropic.com/v1"
     API_VERSION = "2023-06-01"
 
-    # Цены за 1K токенов
+    # Approximate pricing per 1K tokens
     PRICING = {
         "claude-3-opus-20240229": {"input": 0.015, "output": 0.075},
         "claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},
@@ -238,7 +226,7 @@ class AnthropicClient(LLMClient):
     ) -> LLMResponse:
         start_time = time.time()
 
-        # Anthropic использует отдельный system prompt
+        # Anthropic separates the system prompt from the messages array
         system_message = None
         chat_messages = []
 
@@ -336,8 +324,6 @@ class AnthropicClient(LLMClient):
                             yield chunk["delta"].get("text", "")
 
 
-# ============== Factory ==============
-
 _client_cache: dict[str, LLMClient] = {}
 
 
@@ -347,23 +333,21 @@ def get_llm_client(
     api_key: str | None = None,
 ) -> LLMClient:
     """
-    Фабрика для создания LLM клиентов.
+    Factory for LLM clients with instance caching.
 
     Args:
-        provider: "openai" или "anthropic"
-        model: модель (если не указана, берется дефолтная)
-        api_key: API ключ (если не указан, берется из env)
+        provider: "openai" or "anthropic"
+        model: model name; defaults to provider default if omitted
+        api_key: API key; falls back to environment variable
 
     Returns:
-        LLMClient для выбранного провайдера
+        Cached LLMClient for the requested provider and model
     """
-    # Дефолтные модели
     default_models = {
         "openai": "gpt-4o-mini",
         "anthropic": "claude-3-5-sonnet-20241022",
     }
 
-    # API ключи из env
     env_keys = {
         "openai": os.getenv("OPENAI_API_KEY"),
         "anthropic": os.getenv("ANTHROPIC_API_KEY"),
@@ -395,7 +379,7 @@ def estimate_cost(
     tokens_input: int,
     tokens_output: int,
 ) -> float:
-    """Оценка стоимости запроса"""
+    """Estimate request cost in USD based on token counts."""
     pricing = {}
 
     if provider == "openai":
