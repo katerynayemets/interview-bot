@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: interview-bot
+  labels:
+    app.kubernetes.io/name: interview-bot
+    app.kubernetes.io/part-of: interview-bot

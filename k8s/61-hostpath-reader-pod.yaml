@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hostpath-reader
+  namespace: interview-bot
+  labels:
+    app.kubernetes.io/name: hostpath-reader
+    app.kubernetes.io/part-of: interview-bot
+    demo: hostpath-cross-pod
+spec:
+  restartPolicy: Always
+  containers:
+    - name: reader
+      image: busybox:1.36
+      imagePullPolicy: IfNotPresent
+      command:
+        - sh
+        - -c
+        - |
+          echo "[reader] waiting for /shared/heartbeat.log to appear..."
+          while [ ! -f /shared/heartbeat.log ]; do sleep 1; done
+          echo "[reader] file detected, tailing..."
+          exec tail -n +1 -F /shared/heartbeat.log
+      volumeMounts:
+        - name: shared-node-dir
+          mountPath: /shared
+          readOnly: true
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 100m
+          memory: 32Mi
+  volumes:
+    - name: shared-node-dir
+      hostPath:
+        path: /tmp/interview-bot-shared
+        type: DirectoryOrCreate

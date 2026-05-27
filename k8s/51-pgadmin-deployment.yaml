@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgadmin
+  namespace: interview-bot
+  labels:
+    app.kubernetes.io/name: pgadmin
+    app.kubernetes.io/part-of: interview-bot
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pgadmin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pgadmin
+        app.kubernetes.io/part-of: interview-bot
+    spec:
+      securityContext:
+        fsGroup: 5050
+      containers:
+        - name: pgadmin
+          image: dpage/pgadmin4:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: PGADMIN_DEFAULT_EMAIL
+              valueFrom:
+                configMapKeyRef:
+                  name: interview-bot-config
+                  key: PGADMIN_EMAIL
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: interview-bot-secret
+                  key: PGADMIN_PASSWORD
+            - name: PGADMIN_CONFIG_SERVER_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: interview-bot-config
+                  key: PGADMIN_CONFIG_SERVER_MODE
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgadmin
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pgadmin-pvc

@@ -4,6 +4,8 @@ __pycache__/
 *.so
 
 .env
+.env.*
+!.env.example
 
 .idea/
 .vscode/
@@ -16,6 +18,17 @@ docker-compose.override.yml
 
 *.log
 logs/
+
+# Coursework reports stay local (uploaded to DL as PDF separately)
+docs/
+
+# k8s — real Secret manifests must never be committed
+k8s/02-secret.yaml
+k8s/*-secret.yaml
+!k8s/*-secret.yaml.example
+
+# Office temp files
+~$*
 
 alembic/versions/__pycache__/
 

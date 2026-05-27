@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: interview-bot
+  labels:
+    app.kubernetes.io/name: api
+    app.kubernetes.io/part-of: interview-bot
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api
+        app.kubernetes.io/part-of: interview-bot
+    spec:
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - 'until nc -z postgres 5432; do echo "[init] waiting for postgres..."; sleep 2; done; echo "[init] postgres is up"'
+        - name: wait-for-redis
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - 'until nc -z redis 6379; do echo "[init] waiting for redis..."; sleep 2; done; echo "[init] redis is up"'
+      containers:
+        - name: api
+          image: interview-bot:k8s
+          imagePullPolicy: Never
+          command: ["/usr/local/bin/entrypoint.sh"]
+          args: ["uvicorn", "app.main:app", "--host=0.0.0.0", "--port=8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: interview-bot-config
+            - secretRef:
+                name: interview-bot-secret
+          env:
+            - name: RUN_MIGRATIONS
+              value: "1"
+          volumeMounts:
+            - name: logs-shared
+              mountPath: /app/logs
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+
+        - name: log-sidecar
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              echo "[log-sidecar] starting; waiting for log file to appear..."
+              while [ ! -f /app/logs/bot.log ]; do sleep 1; done
+              echo "[log-sidecar] log file detected, tailing..."
+              exec tail -n +1 -F /app/logs/bot.log
+          volumeMounts:
+            - name: logs-shared
+              mountPath: /app/logs
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+
+      volumes:
+        - name: logs-shared
+          emptyDir: {}

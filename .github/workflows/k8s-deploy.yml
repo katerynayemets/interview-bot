@@ -1,0 +1,108 @@
+name: k8s-integration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "k8s/**"
+      - "scripts/deploy-k8s.sh"
+      - "Dockerfile"
+      - "docker/**"
+      - "app/**"
+      - "alembic/**"
+      - "requirements.txt"
+      - ".github/workflows/k8s-deploy.yml"
+  pull_request:
+    paths:
+      - "k8s/**"
+      - "scripts/deploy-k8s.sh"
+      - "Dockerfile"
+      - ".github/workflows/k8s-deploy.yml"
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint manifests and scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o /tmp/kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp
+          sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+
+      - name: Validate k8s manifests
+        run: |
+          kubeconform -strict -summary -ignore-missing-schemas k8s/
+
+      - name: ShellCheck deploy scripts
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./scripts
+          severity: warning
+
+  integration:
+    name: Deploy to ephemeral kind cluster
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ci
+          wait: 60s
+
+      - name: Show cluster info
+        run: |
+          kubectl cluster-info
+          kubectl get nodes -o wide
+
+      - name: Build application image
+        run: |
+          docker build --target production -t interview-bot:k8s .
+
+      - name: Load image into kind
+        run: |
+          kind load docker-image interview-bot:k8s --name ci
+
+      - name: Provision dummy Secret (no real BOT_TOKEN in CI)
+        run: |
+          cp k8s/02-secret.yaml.example k8s/02-secret.yaml
+          sed -i 's/PASTE_REAL_TOKEN_HERE/00000000:dummy_ci_token/' k8s/02-secret.yaml
+
+      - name: Run deploy-k8s.sh
+        env:
+          EXPECTED_CONTEXT: kind-ci
+          SKIP_BUILD: "1"
+        run: |
+          chmod +x scripts/deploy-k8s.sh
+          ./scripts/deploy-k8s.sh
+
+      - name: Show pod statuses
+        if: always()
+        run: |
+          kubectl -n interview-bot get pods -o wide
+          kubectl -n interview-bot get deploy,svc,pvc
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "::group::api logs"
+          kubectl -n interview-bot logs deploy/api -c api --tail=100 || true
+          echo "::endgroup::"
+          echo "::group::api init logs"
+          kubectl -n interview-bot logs deploy/api -c wait-for-postgres --tail=50 || true
+          kubectl -n interview-bot logs deploy/api -c wait-for-redis --tail=50 || true
+          echo "::endgroup::"
+          echo "::group::postgres logs"
+          kubectl -n interview-bot logs deploy/postgres --tail=50 || true
+          echo "::endgroup::"
+          echo "::group::events"
+          kubectl -n interview-bot get events --sort-by=.lastTimestamp || true
+          echo "::endgroup::"

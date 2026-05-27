@@ -132,12 +132,42 @@ async def on_shutdown():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {
-        "ok": True,
+    """Health check endpoint with DB and Redis connectivity probes."""
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import text
+    from app.db.session import SessionLocal
+
+    db_status = "ok"
+    redis_status = "ok"
+
+    try:
+        async with SessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.warning(f"Health check: DB probe failed: {e}")
+        db_status = "error"
+
+    try:
+        import redis.asyncio as redis_async
+
+        client = redis_async.from_url(settings.REDIS_URL)
+        try:
+            await client.ping()
+        finally:
+            await client.aclose()
+    except Exception as e:
+        logger.warning(f"Health check: Redis probe failed: {e}")
+        redis_status = "error"
+
+    healthy = db_status == "ok" and redis_status == "ok"
+    payload = {
+        "status": "ok" if healthy else "degraded",
+        "db": db_status,
+        "redis": redis_status,
         "mode": settings.BOT_MODE,
         "version": "1.0.0",
     }
+    return JSONResponse(status_code=200 if healthy else 503, content=payload)
 
 
 @app.post("/tg/webhook")
