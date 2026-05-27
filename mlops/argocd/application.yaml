@@ -1,0 +1,28 @@
+# ArgoCD Application — declares a GitOps sync target.
+# ArgoCD will continuously reconcile the live state of the cluster with
+# the manifests under `mlops/argocd-demo/` in this repository.
+#
+# Change the `repoURL` to your own fork before `kubectl apply`-ing this file.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-demo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/katerynayemets/interview-bot.git
+    targetRevision: main
+    path: mlops/argocd-demo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

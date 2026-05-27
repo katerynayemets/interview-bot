@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-index
+  namespace: argocd-demo
+  labels:
+    app.kubernetes.io/name: argocd-demo
+data:
+  index.html: |
+    <!doctype html>
+    <html lang="en">
+    <head><meta charset="utf-8"><title>ArgoCD GitOps Demo</title></head>
+    <body style="font-family: sans-serif; max-width: 720px; margin: 40px auto;">
+      <h1>ArgoCD GitOps demo (LR3, interview-bot)</h1>
+      <p>This page is rendered by an Nginx container that ArgoCD
+         continuously syncs from the GitHub repository
+         <code>mlops/argocd-demo/</code> folder.</p>
+      <p>Build label: <strong>v1</strong></p>
+      <p>When you change any manifest in <code>mlops/argocd-demo/</code> and
+         push to the <code>main</code> branch, ArgoCD will pick the change up
+         within ~3 minutes (or instantly if you click Sync in the UI).</p>
+    </body>
+    </html>
